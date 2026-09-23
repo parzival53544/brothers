@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Brothers</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="public-screen">
+  <main style="max-width:700px;">
+    <div class="public-header"><h1>BROTHERS</h1><p>Monte seu pedido abaixo</p></div>
+    <div class="card">
+      <div id="pub-menu-picker"></div>
+      <div class="section-title" style="margin-top:18px;">Seu pedido</div>
+      <div class="order-lines" id="pub-order-lines"><div class="empty-hint">Toque em um item do cardápio para adicionar.</div></div>
+      <div class="total-row"><span>Total</span><span id="pub-order-total">R$ 0,00</span></div>
+      <div class="field-row">
+        <div><label>Seu nome</label><input type="text" id="pub-cust-name" placeholder="Nome"></div>
+        <div><label>WhatsApp</label><input type="tel" id="pub-cust-phone" placeholder="(92) 90000-0000"></div>
+      </div>
+      <label>Tipo de pedido</label>
+      <div class="type-toggle" id="pub-type-toggle">
+        <button data-type="local" class="sel">No local</button>
+        <button data-type="delivery">Delivery</button>
+        <button data-type="retirada">Retirada</button>
+      </div>
+      <label>Forma de pagamento</label>
+      <div class="pay-toggle" id="pub-pay-toggle">
+        <button data-pay="dinheiro" class="sel">Dinheiro</button>
+        <button data-pay="cartao">Cartão</button>
+        <button data-pay="pix_entrega">Pix na entrega</button>
+        <button data-pay="pix_online" id="pub-pay-online-btn" style="display:none;">Pix agora</button>
+      </div>
+      <div class="pix-box" id="pub-pix-box" style="display:none;">
+        <div>Pague <strong id="pub-pix-total">R$ 0,00</strong> via Pix para:</div>
+        <div class="pix-key" id="pub-pix-key">—</div>
+        <button class="btn btn-ghost btn-small" id="btn-copy-pix" type="button">Copiar chave Pix</button>
+        <div style="margin-top:8px;">Depois de pagar, toque em "Enviar pedido". Seu pedido fica <em>aguardando confirmação</em> até o restaurante ver o pagamento.</div>
+      </div>
+      <button class="btn btn-primary btn-block" id="btn-pub-submit" style="margin-top:16px;">Enviar pedido</button>
+      <div class="notice" id="pub-confirm-box" style="display:none; margin-top:14px;"></div>
+    </div>
+    <div class="staff-link"><a id="link-staff-login">Área do funcionário</a></div>
+  </main>
+</div>
+
+<div id="login-screen" style="display:none;">
+  <main>
+    <div class="login-wrap card">
+      <div class="section-title" style="text-align:center;">Entrar</div>
+      <label>Usuário</label><input type="text" id="login-user" placeholder="admin">
+      <label>Senha</label><input type="password" id="login-pass" placeholder="senha">
+      <button class="btn btn-primary btn-block" id="btn-login" style="margin-top:16px;">Entrar</button>
+      <div id="login-error" style="color:var(--danger); font-size:13px; margin-top:8px; display:none;">Usuário ou senha inválidos.</div>
+      <div class="staff-link"><a id="link-back-public">Voltar para o pedido do cliente</a></div>
+    </div>
+  </main>
+</div>
+
+<div id="staff-screen" style="display:none;">
+  <header class="top">
+    <div class="brand"><h1>BROTHERS</h1><span>painel interno</span></div>
+    <nav class="tabs" id="staff-tabs"></nav>
+    <div class="who"><span id="who-label"></span><button id="btn-logout">Sair</button></div>
+  </header>
+  <main>
+    <section id="view-solicitacoes" class="view">
+      <div class="card">
+        <div class="section-title">Solicitações pendentes</div>
+        <div id="solic-list"></div>
+      </div>
+    </section>
+
+    <section id="view-novo" class="view">
+      <div class="grid-2">
+        <div class="card"><div class="section-title">Cardápio (pedido no balcão)</div><div id="menu-picker"></div></div>
+        <div class="card order-panel">
+          <div class="section-title" id="order-panel-title">Pedido atual</div>
+          <label>Nome do cliente (opcional)</label><input type="text" id="cust-name">
+          <label>Telefone (opcional)</label><input type="tel" id="cust-phone">
+          <label>Tipo de pedido</label>
+          <div class="type-toggle" id="staff-type-toggle">
+            <button data-type="local" class="sel">Consumo no local</button>
+            <button data-type="delivery">Delivery</button>
+            <button data-type="retirada">Retirada</button>
+          </div>
+          <label style="margin-top:14px;">Itens do pedido</label>
+          <div class="order-lines" id="order-lines"><div class="empty-hint">Toque em um item do cardápio para adicionar.</div></div>
+          <div class="total-row"><span>Total</span><span id="order-total">R$ 0,00</span></div>
+          <button class="btn btn-primary" id="btn-submit-order">Enviar pedido e imprimir</button>
+          <div style="margin-top:8px; display:flex; gap:8px;">
+            <button class="btn btn-ghost btn-small" id="btn-clear-order" style="flex:1;">Limpar</button>
+            <button class="btn btn-ghost btn-small" id="btn-cancel-edit" style="flex:1; display:none;">Cancelar edição</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-pedidos" class="view">
+      <div class="board">
+        <div class="col producao"><div class="col-head"><h3>Em produção</h3><span class="badge" id="count-producao">0</span></div><div id="col-producao"></div></div>
+        <div class="col pronto"><div class="col-head"><h3>Pronto</h3><span class="badge" id="count-pronto">0</span></div><div id="col-pronto"></div></div>
+      </div>
+    </section>
+
+    <section id="view-cardapio" class="view">
+      <div class="card">
+        <div class="section-title">Adicionar item</div>
+        <div class="add-item-form">
+          <div><label>Nome do item</label><input type="text" id="new-item-name"></div>
+          <div><label>Categoria</label><input type="text" id="new-item-cat" list="cat-list"><datalist id="cat-list"></datalist></div>
+          <div><label>Preço (R$)</label><input type="number" id="new-item-price" step="0.01" min="0"></div>
+          <button class="btn btn-primary" id="btn-add-menu-item" style="height:41px;">Adicionar</button>
+        </div>
+        <div class="section-title" style="margin-top:20px;">Itens cadastrados</div>
+        <table><thead><tr><th>Item</th><th>Categoria</th><th>Preço</th><th></th></tr></thead><tbody id="menu-table-body"></tbody></table>
+      </div>
+    </section>
+
+    <section id="view-historico" class="view">
+      <div class="card">
+        <div class="filters">
+          <div><label>De</label><input type="date" id="hist-from"></div>
+          <div><label>Até</label><input type="date" id="hist-to"></div>
+          <button class="btn btn-ghost" id="btn-hist-filter">Filtrar</button>
+          <button class="btn btn-ghost" id="btn-hist-clear">Limpar filtro</button>
+        </div>
+        <table><thead><tr><th>Nº</th><th>Data</th><th>Cliente</th><th>Tipo</th><th>Itens</th><th>Total</th></tr></thead><tbody id="hist-table-body"></tbody></table>
+        <div class="empty-hint" id="hist-empty" style="display:none;">Nenhum pedido finalizado nesse período.</div>
+      </div>
+    </section>
+
+    <section id="view-relatorios" class="view">
+      <div class="card">
+        <div class="presets">
+          <button class="btn btn-ghost btn-small" data-range="today">Hoje</button>
+          <button class="btn btn-ghost btn-small" data-range="week">Esta semana</button>
+          <button class="btn btn-ghost btn-small" data-range="month">Este mês</button>
+          <span style="align-self:center; color:var(--ink-soft); font-size:13px;">ou:</span>
+          <input type="date" id="rep-from" style="width:150px;"><input type="date" id="rep-to" style="width:150px;">
+          <button class="btn btn-primary btn-small" id="btn-rep-custom">Aplicar</button>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-box"><div class="lbl">Faturamento</div><div class="val" id="rep-revenue">R$ 0,00</div></div>
+          <div class="stat-box"><div class="lbl">Pedidos</div><div class="val" id="rep-count">0</div></div>
+          <div class="stat-box"><div class="lbl">Ticket médio</div><div class="val" id="rep-avg">R$ 0,00</div></div>
+        </div>
+        <h3 style="font-size:15px; margin-bottom:10px;">Por tipo de pedido</h3>
+        <div id="rep-by-type" style="margin-bottom:22px;"></div>
+        <h3 style="font-size:15px; margin-bottom:10px;">Itens mais vendidos</h3>
+        <div id="rep-top-items"></div>
+      </div>
+    </section>
+
+    <section id="view-config" class="view">
+      <div class="card">
+        <div class="section-title">Dados do restaurante</div>
+        <label>WhatsApp do restaurante (com DDD, só números)</label><input type="text" id="cfg-whatsapp">
+        <label>Nome do titular da chave Pix</label><input type="text" id="cfg-pix-name">
+        <label>Chave Pix</label><input type="text" id="cfg-pix-key">
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+          <input type="checkbox" id="cfg-online-toggle" style="width:auto;">
+          Permitir pagamento online (Pix agora) no link público
+        </label>
+        <div class="notice" style="margin-top:10px;">Hoje esse pagamento é confirmado manualmente pela equipe em Solicitações. Quando integrarmos um gateway de Pix de verdade, a confirmação passa a ser automática.</div>
+        <button class="btn btn-primary" id="btn-save-config" style="margin-top:12px;">Salvar</button>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <div class="section-title">Usuários</div>
+        <div class="add-item-form">
+          <div><label>Usuário</label><input type="text" id="new-user-username"></div>
+          <div><label>Senha</label><input type="text" id="new-user-password"></div>
+          <div><label>Função</label><select id="new-user-role"><option value="garcom">Garçom</option><option value="admin">Admin</option></select></div>
+          <button class="btn btn-primary" id="btn-add-user" style="height:41px;">Adicionar</button>
+        </div>
+        <table><thead><tr><th>Usuário</th><th>Função</th><th></th></tr></thead><tbody id="users-table-body"></tbody></table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+<div id="print-area">
+  <h2>BROTHERS</h2>
+  <div class="sub" id="pr-sub"></div><hr>
+  <div id="pr-lines"></div><hr>
+  <div class="pline tot"><span>TOTAL</span><span id="pr-total"></span></div><hr>
+  <div class="sub" id="pr-footer"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

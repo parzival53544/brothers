@@ -1,0 +1,28 @@
+name: Build Brothers Desktop (.exe)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "electron/**"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Instalar dependências
+        working-directory: electron
+        run: npm install
+      - name: Gerar instalador .exe
+        working-directory: electron
+        run: npm run dist
+      - name: Publicar instalador como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: Brothers-Windows-Installer
+          path: electron/dist/*.exe

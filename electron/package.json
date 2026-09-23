@@ -1,0 +1,25 @@
+{
+  "name": "brothers-desktop",
+  "version": "1.0.0",
+  "description": "Brothers - aplicativo desktop (abre o sistema hospedado na nuvem)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.brothers.desktop",
+    "productName": "Brothers",
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
