@@ -1,5 +1,35 @@
 # Brothers — sistema completo (nuvem + desktop)
 
+## Novidades da v2
+
+- **Link da equipe escondido**: não tem mais link nenhum no cardápio público. Vá em
+  Configurações → "Link de acesso da equipe" (depois de entrar pela primeira vez) para
+  pegar o link de login. Na primeira instalação, use `SEU_DOMINIO/?staff=` + o código
+  que aparece em Configurações assim que você entrar — ou peça pro administrador
+  original te passar o link.
+- **Grupos de complementos**: cadastre em Cardápio → "Grupos de complementos" (ex:
+  "Adicionais" com múltipla escolha, "Sabores de suco" com escolha única), depois
+  marque quais grupos cada item usa dentro do próprio item.
+- **Fotos dos itens**: qualquer formato de imagem serve (jpg, png, etc.) e qualquer
+  tamanho — o sistema recorta pro quadrado (1:1) e redimensiona sozinho na hora do
+  upload. Não precisa preparar nada antes.
+- **Horário de funcionamento**: Configurações → escolha o fuso horário e o horário de
+  cada dia da semana. Fora do horário, o link público mostra "fechado" e bloqueia
+  novos pedidos automaticamente. O botão vermelho "Fechar agora" é só para emergências
+  (ignora o horário configurado até você reabrir manualmente).
+- **Som de notificação**: Configurações → envie um .mp3 se quiser um som personalizado.
+  Sem enviar nada, o sistema já toca um bipe padrão sozinho quando cai uma solicitação.
+- **Importar/exportar cardápio**: Cardápio → botões "Exportar CSV" / "Importar CSV".
+  Escolhi CSV (não .xlsx) porque abre direto no Excel sem precisar de nenhuma
+  biblioteca extra no servidor — é só abrir o arquivo baixado normalmente no Excel,
+  editar as colunas e importar de volta. Colunas: categoria, nome, descrição, preço,
+  ativo (sim/nao), estoque_ativo (sim/nao), estoque_qtd, grupos_complementos (nomes
+  separados por `;`, precisam já existir no sistema). A importação atualiza itens que
+  já existem (por nome + categoria) e cria os que não existem — nunca apaga itens que
+  não estiverem na planilha. Fotos não entram no CSV; adicione depois pelo item.
+
+
+
 Este pacote tem três partes:
 
 ```

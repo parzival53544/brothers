@@ -13,56 +13,17 @@
     <div class="cover-photo" id="pub-cover"></div>
     <div class="avatar" id="pub-avatar"></div>
   </div>
-  <main style="max-width:700px;">
-    <div class="public-header"><h1 id="pub-title">BROTHERS</h1><p>Monte seu pedido abaixo</p></div>
-    <div class="card">
-      <div id="pub-menu-picker"></div>
-      <div class="section-title" style="margin-top:18px;">Seu pedido</div>
-      <div class="order-lines" id="pub-order-lines"><div class="empty-hint">Toque em um item do cardápio para adicionar.</div></div>
-      <div class="total-row"><span>Total</span><span id="pub-order-total">R$ 0,00</span></div>
-
-      <div class="field-row">
-        <div><label>Seu nome</label><input type="text" id="pub-cust-name" placeholder="Nome"></div>
-        <div><label>WhatsApp</label><input type="tel" id="pub-cust-phone" placeholder="(92) 90000-0000"></div>
-      </div>
-
-      <label>Tipo de pedido</label>
-      <div class="type-toggle" id="pub-type-toggle">
-        <button data-type="local" class="sel">No local</button>
-        <button data-type="delivery">Delivery</button>
-        <button data-type="retirada">Retirada</button>
-      </div>
-
-      <div id="pub-delivery-box" style="display:none;">
-        <div class="field-row">
-          <div><label>Rua / Endereço</label><input type="text" id="pub-addr-street" placeholder="Rua, avenida..."></div>
-          <div style="max-width:100px;"><label>Número</label><input type="text" id="pub-addr-number" placeholder="Nº"></div>
-        </div>
-        <label>Bairro</label>
-        <select id="pub-addr-neighborhood"><option value="">Selecione...</option></select>
-        <div class="notice" id="pub-delivery-fee-box" style="display:none; margin-top:10px;"></div>
-      </div>
-
-      <label>Forma de pagamento</label>
-      <div class="pay-toggle" id="pub-pay-toggle">
-        <button data-pay="dinheiro" class="sel">Dinheiro</button>
-        <button data-pay="cartao">Cartão</button>
-        <button data-pay="pix_entrega">Pix na entrega</button>
-        <button data-pay="pix_online" id="pub-pay-online-btn" style="display:none;">Pix agora</button>
-      </div>
-
-      <div class="pix-box" id="pub-pix-box" style="display:none;">
-        <div>Pague <strong id="pub-pix-total">R$ 0,00</strong> via Pix para:</div>
-        <div class="pix-key" id="pub-pix-key">—</div>
-        <button class="btn btn-ghost btn-small" id="btn-copy-pix" type="button">Copiar chave Pix</button>
-        <div style="margin-top:8px;">Depois de pagar, toque em "Enviar pedido". Seu pedido fica <em>aguardando confirmação</em> até o restaurante ver o pagamento.</div>
-      </div>
-
-      <button class="btn btn-primary btn-block" id="btn-pub-submit" style="margin-top:16px;">Enviar pedido</button>
-      <div class="notice" id="pub-confirm-box" style="display:none; margin-top:14px;"></div>
-    </div>
-    <div class="staff-link"><a id="link-staff-login">Área do funcionário</a></div>
+  <main style="max-width:700px; padding-bottom:110px;">
+    <div class="public-header"><h1 id="pub-title">BROTHERS</h1><p>Toque em um item para ver detalhes e adicionar</p></div>
+    <div class="closed-banner" id="closed-banner" style="display:none;"></div>
+    <div id="pub-menu-picker"></div>
   </main>
+
+  <div class="cart-bar" id="cart-bar" style="display:none;">
+    <span class="cart-count" id="cart-bar-count">0</span>
+    <span class="cart-label">Ver pedido</span>
+    <span class="cart-total" id="cart-bar-total">R$ 0,00</span>
+  </div>
 </div>
 
 <div id="login-screen" style="display:none;">
@@ -73,7 +34,6 @@
       <label>Senha</label><input type="password" id="login-pass" placeholder="senha">
       <button class="btn btn-primary btn-block" id="btn-login" style="margin-top:16px;">Entrar</button>
       <div id="login-error" style="color:var(--danger); font-size:13px; margin-top:8px; display:none;">Usuário ou senha inválidos.</div>
-      <div class="staff-link"><a id="link-back-public">Voltar para o pedido do cliente</a></div>
     </div>
   </main>
 </div>
@@ -121,12 +81,23 @@
 
     <section id="view-cardapio" class="view">
       <div class="card">
-        <div class="section-title">Ordem das categorias</div>
+        <div class="section-title">Ordem e visibilidade das categorias</div>
         <div id="cat-order-list"></div>
       </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="section-title">Grupos de complementos</div>
+        <div id="addon-groups-list"></div>
+        <button class="btn btn-ghost btn-small" id="btn-new-group" style="margin-top:10px;">+ Novo grupo</button>
+      </div>
+
       <div class="card" style="margin-top:16px;">
         <div class="section-title">Itens do cardápio</div>
-        <button class="btn btn-primary btn-small" id="btn-open-new-item" style="margin-bottom:14px;">+ Novo item</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+          <button class="btn btn-primary btn-small" id="btn-open-new-item">+ Novo item</button>
+          <button class="btn btn-ghost btn-small" id="btn-export-csv">⬇ Exportar CSV</button>
+          <label class="btn btn-ghost btn-small" style="margin:0; cursor:pointer;">⬆ Importar CSV<input type="file" accept=".csv" id="btn-import-csv" style="display:none;"></label>
+        </div>
         <div id="menu-by-category"></div>
       </div>
     </section>
@@ -175,11 +146,9 @@
           <input type="color" id="cfg-accent-picker" style="width:44px; height:38px; padding:2px;">
           <span class="swatch" id="cfg-accent-preview"></span>
         </div>
-
         <label style="margin-top:16px;">Foto de capa (banner)</label>
         <input type="file" accept="image/*" id="cfg-cover-input">
         <div class="img-preview cover-preview" id="cfg-cover-preview"></div>
-
         <label style="margin-top:16px;">Foto de perfil (1:1)</label>
         <input type="file" accept="image/*" id="cfg-logo-input">
         <div class="img-preview avatar-preview" id="cfg-logo-preview"></div>
@@ -191,11 +160,51 @@
         <label>Nome do titular da chave Pix</label><input type="text" id="cfg-pix-name">
         <label>Chave Pix</label><input type="text" id="cfg-pix-key">
         <label style="display:flex; align-items:center; gap:8px; margin-top:14px;">
-          <input type="checkbox" id="cfg-online-toggle" style="width:auto;">
-          Permitir pagamento online (Pix agora) no link público
+          <input type="checkbox" id="cfg-online-toggle" style="width:auto;"> Permitir pagamento online (Pix agora) no link público
         </label>
-        <div class="notice" style="margin-top:10px;">Hoje esse pagamento é confirmado manualmente pela equipe em Pedidos → Solicitações.</div>
-        <button class="btn btn-primary" id="btn-save-config" style="margin-top:12px;">Salvar</button>
+        <div class="notice" style="margin-top:10px;">Confirmação hoje é manual, em Pedidos → Solicitações.</div>
+        <label style="margin-top:14px;">Som de notificação (opcional)</label>
+        <input type="file" accept="audio/*" id="cfg-sound-input">
+        <div id="cfg-sound-status" class="notice" style="display:none; margin-top:8px;"></div>
+        <button class="btn btn-ghost btn-small" id="btn-test-sound" style="margin-top:6px;">▶ Testar som</button>
+        <button class="btn btn-primary" id="btn-save-config" style="margin-top:16px;">Salvar</button>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="section-title">Horário de funcionamento</div>
+        <label>Fuso horário</label>
+        <select id="cfg-timezone">
+          <option value="America/Manaus">Manaus (GMT-4)</option>
+          <option value="America/Sao_Paulo">São Paulo / Brasília (GMT-3)</option>
+          <option value="America/Belem">Belém (GMT-3)</option>
+          <option value="America/Fortaleza">Fortaleza (GMT-3)</option>
+          <option value="America/Recife">Recife (GMT-3)</option>
+          <option value="America/Bahia">Salvador (GMT-3)</option>
+          <option value="America/Cuiaba">Cuiabá (GMT-4)</option>
+          <option value="America/Porto_Velho">Porto Velho (GMT-4)</option>
+          <option value="America/Boa_Vista">Boa Vista (GMT-4)</option>
+          <option value="America/Rio_Branco">Rio Branco (GMT-5)</option>
+          <option value="America/Noronha">Fernando de Noronha (GMT-2)</option>
+        </select>
+        <div id="hours-list" style="margin-top:12px;"></div>
+        <button class="btn btn-primary" id="btn-save-hours" style="margin-top:12px;">Salvar horários</button>
+        <div class="emergency-box" id="emergency-box">
+          <div>
+            <strong id="emergency-status">Loja funcionando normalmente</strong>
+            <div style="font-size:12px; color:var(--ink-soft); margin-top:2px;">Use apenas em emergências — fecha os pedidos imediatamente, ignorando o horário configurado.</div>
+          </div>
+          <button class="btn btn-danger btn-small" id="btn-emergency-toggle">Fechar agora</button>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="section-title">Link de acesso da equipe</div>
+        <div class="notice">Esse link não aparece em nenhum lugar do cardápio — guarde-o e compartilhe só com sua equipe.</div>
+        <div class="field-row">
+          <input type="text" id="cfg-staff-link" readonly>
+          <button class="btn btn-ghost btn-small" id="btn-copy-staff-link" style="max-width:120px;">Copiar</button>
+        </div>
+        <button class="btn btn-ghost btn-small" id="btn-regen-slug" style="margin-top:8px;">Gerar novo link (invalida o antigo)</button>
       </div>
 
       <div class="card" style="margin-top:16px;">
@@ -222,28 +231,91 @@
   </main>
 </div>
 
+<!-- modal: detalhe do item / adicionar ao carrinho -->
+<div class="modal-overlay" id="detail-modal">
+  <div class="modal-box detail-box">
+    <button class="modal-x" id="detail-close" type="button">✕</button>
+    <div class="detail-img" id="detail-img"></div>
+    <div style="padding:18px;">
+      <h2 id="detail-name"></h2>
+      <p class="detail-desc" id="detail-desc"></p>
+      <div class="detail-price" id="detail-price"></div>
+      <div id="detail-groups"></div>
+      <div class="field-row" style="align-items:center; margin-top:16px;">
+        <div class="qty-ctrl big"><button type="button" id="detail-qminus">−</button><span id="detail-qty">1</span><button type="button" id="detail-qplus">+</button></div>
+        <button class="btn btn-primary" id="detail-add" style="flex:1;">Adicionar — R$ 0,00</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- modal: carrinho / checkout (cliente) -->
+<div class="modal-overlay" id="checkout-modal">
+  <div class="modal-box">
+    <button class="modal-x" id="checkout-close" type="button">✕</button>
+    <div class="section-title">Seu pedido</div>
+    <div class="order-lines" id="checkout-lines"></div>
+    <div class="total-row"><span>Total</span><span id="checkout-total">R$ 0,00</span></div>
+
+    <div class="field-row">
+      <div><label>Seu nome</label><input type="text" id="pub-cust-name" placeholder="Nome"></div>
+      <div><label>WhatsApp</label><input type="tel" id="pub-cust-phone" placeholder="(92) 90000-0000"></div>
+    </div>
+    <label>Tipo de pedido</label>
+    <div class="type-toggle" id="pub-type-toggle">
+      <button data-type="local" class="sel">No local</button>
+      <button data-type="delivery">Delivery</button>
+      <button data-type="retirada">Retirada</button>
+    </div>
+    <div id="pub-delivery-box" style="display:none;">
+      <div class="field-row">
+        <div><label>Rua / Endereço</label><input type="text" id="pub-addr-street" placeholder="Rua, avenida..."></div>
+        <div style="max-width:100px;"><label>Número</label><input type="text" id="pub-addr-number" placeholder="Nº"></div>
+      </div>
+      <label>Bairro</label>
+      <select id="pub-addr-neighborhood"><option value="">Selecione...</option></select>
+      <div class="notice" id="pub-delivery-fee-box" style="display:none; margin-top:10px;"></div>
+    </div>
+    <label>Forma de pagamento</label>
+    <div class="pay-toggle" id="pub-pay-toggle">
+      <button data-pay="dinheiro" class="sel">Dinheiro</button>
+      <button data-pay="cartao">Cartão</button>
+      <button data-pay="pix_entrega">Pix na entrega</button>
+      <button data-pay="pix_online" id="pub-pay-online-btn" style="display:none;">Pix agora</button>
+    </div>
+    <div class="pix-box" id="pub-pix-box" style="display:none;">
+      <div>Pague <strong id="pub-pix-total">R$ 0,00</strong> via Pix para:</div>
+      <div class="pix-key" id="pub-pix-key">—</div>
+      <button class="btn btn-ghost btn-small" id="btn-copy-pix" type="button">Copiar chave Pix</button>
+      <div style="margin-top:8px;">Depois de pagar, toque em "Enviar pedido". Fica <em>aguardando confirmação</em> até o restaurante ver o pagamento.</div>
+    </div>
+    <button class="btn btn-primary btn-block" id="btn-pub-submit" style="margin-top:16px;">Enviar pedido</button>
+    <div class="notice" id="pub-confirm-box" style="display:none; margin-top:14px;"></div>
+  </div>
+</div>
+
 <!-- modal: adicionar/editar item do cardápio -->
 <div class="modal-overlay" id="item-modal">
   <div class="modal-box">
     <div class="section-title" id="item-modal-title">Novo item</div>
     <label>Nome do item</label><input type="text" id="im-name">
     <label>Categoria</label><input type="text" id="im-category" list="cat-list"><datalist id="cat-list"></datalist>
+    <label>Descrição / ingredientes</label><textarea id="im-description" rows="2" placeholder="Ex: pão, hambúrguer, queijo, alface e tomate"></textarea>
     <label>Preço (R$)</label><input type="number" step="0.01" min="0" id="im-price">
-    <label>Foto (1:1)</label>
+    <label>Foto (1:1) — qualquer formato de imagem, recortamos automaticamente</label>
     <input type="file" accept="image/*" id="im-image-input">
     <div class="img-preview item-img-preview" id="im-image-preview"></div>
-
     <label style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+      <input type="checkbox" id="im-active" checked style="width:auto;"> Item ativo (visível no cardápio)
+    </label>
+    <label style="display:flex; align-items:center; gap:8px; margin-top:10px;">
       <input type="checkbox" id="im-stock-enabled" style="width:auto;"> Controlar estoque
     </label>
     <div id="im-stock-qty-box" style="display:none;">
       <label>Quantidade disponível</label><input type="number" min="0" step="1" id="im-stock-qty">
     </div>
-
-    <label style="margin-top:14px;">Complementos (opcional)</label>
-    <div id="im-addons-list"></div>
-    <button class="btn btn-ghost btn-small" id="im-add-addon" type="button" style="margin-top:6px;">+ Adicionar complemento</button>
-
+    <label style="margin-top:14px;">Grupos de complementos deste item</label>
+    <div id="im-groups-list"></div>
     <div style="display:flex; gap:8px; margin-top:18px;">
       <button class="btn btn-primary" id="im-save" style="flex:1;">Salvar</button>
       <button class="btn btn-ghost" id="im-cancel" style="flex:1;">Cancelar</button>
@@ -251,14 +323,22 @@
   </div>
 </div>
 
-<!-- modal: escolher complementos ao adicionar item no carrinho -->
-<div class="modal-overlay" id="addon-modal">
+<!-- modal: grupo de complementos -->
+<div class="modal-overlay" id="group-modal">
   <div class="modal-box">
-    <div class="section-title" id="addon-modal-title">Complementos</div>
-    <div id="addon-modal-list"></div>
-    <div style="display:flex; gap:8px; margin-top:16px;">
-      <button class="btn btn-primary" id="addon-modal-confirm" style="flex:1;">Adicionar ao pedido</button>
-      <button class="btn btn-ghost" id="addon-modal-cancel" style="flex:1;">Cancelar</button>
+    <div class="section-title" id="group-modal-title">Novo grupo</div>
+    <label>Nome do grupo</label><input type="text" id="gm-name" placeholder="Ex: Adicionais">
+    <label>Tipo de escolha</label>
+    <div class="type-toggle">
+      <button type="button" data-type="multi" class="sel" id="gm-type-multi">Múltipla escolha</button>
+      <button type="button" data-type="single" id="gm-type-single">Escolha única</button>
+    </div>
+    <label style="margin-top:14px;">Opções</label>
+    <div id="gm-options-list"></div>
+    <button class="btn btn-ghost btn-small" id="gm-add-option" type="button" style="margin-top:6px;">+ Adicionar opção</button>
+    <div style="display:flex; gap:8px; margin-top:18px;">
+      <button class="btn btn-primary" id="gm-save" style="flex:1;">Salvar grupo</button>
+      <button class="btn btn-ghost" id="gm-cancel" style="flex:1;">Cancelar</button>
     </div>
   </div>
 </div>
