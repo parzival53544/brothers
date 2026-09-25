@@ -69,6 +69,113 @@
     });
   }
 
+  // ===================== seletor de imagem (biblioteca / upload) + corte 1:1 =====================
+  var pickerCallback = null;
+  function openImagePicker(onSelected) {
+    pickerCallback = onSelected;
+    document.getElementById("picker-modal").classList.add("show");
+    loadImageLibraryGrid();
+  }
+  async function loadImageLibraryGrid() {
+    var grid = document.getElementById("picker-library-grid");
+    grid.innerHTML = '<div class="empty-hint">Carregando…</div>';
+    try {
+      var r = await api("/api/image-library");
+      grid.innerHTML = r.images.length ? r.images.map(function (im) {
+        return '<div class="pick-thumb" data-id="' + im.id + '" style="' + bgImgStyle(im.image) + '" title="' + escapeHtml(im.name) + '"></div>';
+      }).join("") : '<div class="empty-hint">Nenhuma imagem enviada ainda.</div>';
+      grid.querySelectorAll(".pick-thumb").forEach(function (th, idx) {
+        th.addEventListener("click", function () {
+          document.getElementById("picker-modal").classList.remove("show");
+          if (pickerCallback) pickerCallback(r.images[idx].image);
+        });
+      });
+    } catch (e) { grid.innerHTML = '<div class="empty-hint">Não foi possível carregar a biblioteca.</div>'; }
+  }
+  document.getElementById("picker-close").addEventListener("click", function () { document.getElementById("picker-modal").classList.remove("show"); });
+  document.getElementById("picker-upload-input").addEventListener("change", async function () {
+    if (!this.files[0]) return;
+    var rawDataUrl = await fileToDataUrl(this.files[0]);
+    this.value = "";
+    document.getElementById("picker-modal").classList.remove("show");
+    openCropModal(rawDataUrl);
+  });
+
+  var cropImg = null, cropNaturalW = 0, cropNaturalH = 0, cropBaseScale = 1, cropZoom = 1, cropTX = 0, cropTY = 0;
+  var CROP_VIEWPORT = 280, CROP_OUTPUT = 480;
+  function openCropModal(rawDataUrl) {
+    var imgEl = document.getElementById("crop-img");
+    imgEl.src = rawDataUrl;
+    imgEl.onload = function () {
+      cropNaturalW = imgEl.naturalWidth; cropNaturalH = imgEl.naturalHeight;
+      cropBaseScale = CROP_VIEWPORT / Math.min(cropNaturalW, cropNaturalH);
+      cropZoom = 1;
+      document.getElementById("crop-zoom").value = 1;
+      centerCropTransform();
+      applyCropTransform();
+      document.getElementById("crop-modal").classList.add("show");
+    };
+  }
+  function centerCropTransform() {
+    var eff = cropBaseScale * cropZoom;
+    var dw = cropNaturalW * eff, dh = cropNaturalH * eff;
+    cropTX = (CROP_VIEWPORT - dw) / 2; cropTY = (CROP_VIEWPORT - dh) / 2;
+  }
+  function clampCropTranslate() {
+    var eff = cropBaseScale * cropZoom;
+    var dw = cropNaturalW * eff, dh = cropNaturalH * eff;
+    cropTX = Math.min(0, Math.max(CROP_VIEWPORT - dw, cropTX));
+    cropTY = Math.min(0, Math.max(CROP_VIEWPORT - dh, cropTY));
+  }
+  function applyCropTransform() {
+    var eff = cropBaseScale * cropZoom;
+    var imgEl = document.getElementById("crop-img");
+    imgEl.style.width = (cropNaturalW * eff) + "px";
+    imgEl.style.height = (cropNaturalH * eff) + "px";
+    imgEl.style.transform = "translate(" + cropTX + "px," + cropTY + "px)";
+  }
+  var cropDragging = false, cropStartX = 0, cropStartY = 0, cropStartTX = 0, cropStartTY = 0;
+  var cropViewportEl = document.getElementById("crop-viewport");
+  cropViewportEl.addEventListener("pointerdown", function (e) {
+    cropDragging = true; cropStartX = e.clientX; cropStartY = e.clientY; cropStartTX = cropTX; cropStartTY = cropTY;
+    try { cropViewportEl.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  cropViewportEl.addEventListener("pointermove", function (e) {
+    if (!cropDragging) return;
+    cropTX = cropStartTX + (e.clientX - cropStartX);
+    cropTY = cropStartTY + (e.clientY - cropStartY);
+    clampCropTranslate(); applyCropTransform();
+  });
+  cropViewportEl.addEventListener("pointerup", function () { cropDragging = false; });
+  cropViewportEl.addEventListener("pointercancel", function () { cropDragging = false; });
+  document.getElementById("crop-zoom").addEventListener("input", function () {
+    cropZoom = parseFloat(this.value) || 1;
+    clampCropTranslate(); applyCropTransform();
+  });
+  document.getElementById("crop-cancel").addEventListener("click", function () { document.getElementById("crop-modal").classList.remove("show"); });
+  async function finishCrop(dataUrl) {
+    document.getElementById("crop-modal").classList.remove("show");
+    document.getElementById("picker-modal").classList.remove("show");
+    try { await api("/api/image-library", { method: "POST", body: { image: dataUrl, name: "imagem" } }); } catch (e) {}
+    if (pickerCallback) pickerCallback(dataUrl);
+  }
+  document.getElementById("crop-confirm").addEventListener("click", function () {
+    var imgEl = document.getElementById("crop-img");
+    var eff = cropBaseScale * cropZoom;
+    var sx = (0 - cropTX) / eff, sy = (0 - cropTY) / eff, sSide = CROP_VIEWPORT / eff;
+    var canvas = document.createElement("canvas"); canvas.width = CROP_OUTPUT; canvas.height = CROP_OUTPUT;
+    canvas.getContext("2d").drawImage(imgEl, sx, sy, sSide, sSide, 0, 0, CROP_OUTPUT, CROP_OUTPUT);
+    finishCrop(canvas.toDataURL("image/jpeg", 0.85));
+  });
+  document.getElementById("crop-auto").addEventListener("click", function () {
+    var imgEl = document.getElementById("crop-img");
+    var side = Math.min(cropNaturalW, cropNaturalH);
+    var sx = (cropNaturalW - side) / 2, sy = (cropNaturalH - side) / 2;
+    var canvas = document.createElement("canvas"); canvas.width = CROP_OUTPUT; canvas.height = CROP_OUTPUT;
+    canvas.getContext("2d").drawImage(imgEl, sx, sy, side, side, 0, 0, CROP_OUTPUT, CROP_OUTPUT);
+    finishCrop(canvas.toDataURL("image/jpeg", 0.85));
+  });
+
   // ===================== som de notificação =====================
   function beep() {
     try {
@@ -218,13 +325,16 @@
     if (id === "config") { loadConfigForm(); renderUsersTable(); }
   }
 
-  function stockLabel(item) {
+  // isStaff=true (admin/garçom): mostra quantidade em estoque. Cliente nunca vê números de estoque,
+  // só se o item está disponível ou não.
+  function stockLabel(item, isStaff) {
+    if (!isStaff) return item.unavailable ? "Indisponível" : "";
     if (!item.stock || !item.stock.enabled) return "";
     if (item.stock.quantity <= 0) return "Esgotado";
     if (item.stock.quantity <= 3) return "Só " + item.stock.quantity + " disponível(is)";
     return item.stock.quantity + " disponíveis";
   }
-  function menuPickerHtml(menu, disabledCats) {
+  function menuPickerHtml(menu, disabledCats, isStaff) {
     disabledCats = disabledCats || [];
     if (menu.length === 0) return '<div class="empty-hint">Nenhum item cadastrado ainda.</div>';
     var cats = {};
@@ -234,12 +344,13 @@
       var catOff = disabledCats.indexOf(cat) !== -1;
       html += '<div class="cat-block"><h3>' + escapeHtml(cat) + (catOff ? " (desativada)" : "") + '</h3><div class="menu-grid">';
       cats[cat].forEach(function (it) {
-        var out = (it.stock && it.stock.enabled && it.stock.quantity <= 0) || it.active === false || catOff;
-        var lbl = it.active === false ? "Indisponível" : catOff ? "" : stockLabel(it);
+        var soldOut = isStaff ? (it.stock && it.stock.enabled && it.stock.quantity <= 0) : it.unavailable;
+        var out = soldOut || it.active === false || catOff;
+        var lbl = it.active === false ? "Indisponível" : catOff ? "" : stockLabel(it, isStaff);
         html += '<button type="button" class="menu-item-btn' + (out ? ' out' : '') + '" data-id="' + it.id + '" ' + (out ? 'disabled' : '') + '>' +
           '<span class="thumb" style="' + bgImgStyle(it.image) + '"></span>' +
           '<span class="txt"><span class="nm">' + escapeHtml(it.name) + '</span><span class="pr">' + fmtMoney(it.price) + '</span>' +
-          (lbl ? '<span class="stockflag' + (it.stock && it.stock.quantity <= 3 ? ' low' : '') + '">' + lbl + '</span>' : '') + '</span></button>';
+          (lbl ? '<span class="stockflag' + (isStaff && it.stock && it.stock.quantity <= 3 ? ' low' : '') + '">' + lbl + '</span>' : '') + '</span></button>';
       });
       html += '</div></div>';
     });
@@ -309,7 +420,7 @@
       banner.style.display = "block";
       banner.textContent = publicConfigCache.status.reason === "fechado_emergencia" ? "Estamos temporariamente fechados. Volte em breve!" : "Estamos fechados no momento. Confira nosso horário de funcionamento.";
     } else banner.style.display = "none";
-    document.getElementById("pub-menu-picker").innerHTML = menuPickerHtml(publicMenuCache);
+    document.getElementById("pub-menu-picker").innerHTML = menuPickerHtml(publicMenuCache, [], false);
     document.querySelectorAll("#pub-menu-picker .menu-item-btn").forEach(function (btn) {
       if (!btn.disabled) btn.addEventListener("click", function () {
         if (!publicConfigCache.status.open) { showToast("O restaurante está fechado no momento."); return; }
@@ -538,7 +649,7 @@
   var editingOrderId = null;
   async function loadStaffMenu() {
     try { var r = await api("/api/menu"); staffMenuCache = r.menu; } catch (e) { staffMenuCache = []; }
-    document.getElementById("menu-picker").innerHTML = menuPickerHtml(staffMenuCache, staffConfigCache ? staffConfigCache.disabledCategories : []);
+    document.getElementById("menu-picker").innerHTML = menuPickerHtml(staffMenuCache, staffConfigCache ? staffConfigCache.disabledCategories : [], true);
     document.querySelectorAll("#menu-picker .menu-item-btn").forEach(function (btn) {
       if (!btn.disabled) btn.addEventListener("click", function () {
         var item = staffMenuCache.find(function (m) { return m.id === btn.dataset.id; });
@@ -604,10 +715,34 @@
     } catch (e) { showToast(e.message); }
   });
   function printReceipt(order) {
-    document.getElementById("pr-sub").innerHTML = "Pedido #" + String(order.number).padStart(3, "0") + " — " + typeLabel(order.type) + "<br>" + fmtDateTime(order.createdAt) +
+    var sub = "Pedido #" + String(order.number).padStart(3, "0") + " — " + typeLabel(order.type) + "<br>" + fmtDateTime(order.createdAt) +
       (order.customerName ? "<br>Cliente: " + escapeHtml(order.customerName) : "") + (order.customerPhone ? "<br>Tel: " + escapeHtml(order.customerPhone) : "");
-    document.getElementById("pr-lines").innerHTML = order.lines.map(function (l) { return '<div class="pline"><span>' + l.qty + 'x ' + escapeHtml(l.name) + '</span><span>' + fmtMoney(l.price * l.qty) + '</span></div>'; }).join("");
+    document.getElementById("pr-sub").innerHTML = sub;
+
+    var linesHtml = order.lines.map(function (l) {
+      var block = '<div class="pline"><span>' + l.qty + 'x ' + escapeHtml(l.name) + '</span><span>' + fmtMoney(l.basePrice != null ? l.basePrice * l.qty : l.price * l.qty) + '</span></div>';
+      if (l.addons && l.addons.length) {
+        block += l.addons.map(function (a) { return '<div class="pline addon-line"><span>&nbsp;&nbsp;+ ' + escapeHtml(a.name) + '</span><span>' + fmtMoney(a.price * l.qty) + '</span></div>'; }).join("");
+      }
+      block += '<div class="pline sub"><span>&nbsp;&nbsp;subtotal</span><span>' + fmtMoney(l.price * l.qty) + '</span></div>';
+      return block;
+    }).join("");
+    document.getElementById("pr-lines").innerHTML = linesHtml;
+
+    var itemsTotal = order.lines.reduce(function (s, l) { return s + l.price * l.qty; }, 0);
+    var extraHtml = "";
+    if (order.delivery) extraHtml += '<div class="pline"><span>Taxa de entrega</span><span>' + fmtMoney(order.delivery.fee) + '</span></div>';
+    document.getElementById("pr-extra").innerHTML = extraHtml;
     document.getElementById("pr-total").textContent = fmtMoney(order.total);
+
+    var addrBox = document.getElementById("pr-address");
+    if (order.delivery) {
+      addrBox.style.display = "block";
+      addrBox.innerHTML = 'ENTREGAR EM:<br>' + escapeHtml(order.delivery.street) + ', ' + escapeHtml(order.delivery.number) + '<br>Bairro: ' + escapeHtml(order.delivery.neighborhood) +
+        '<br><br>Cliente: ' + escapeHtml(order.customerName || "—") + '<br>Tel: ' + escapeHtml(order.customerPhone || "—");
+    } else {
+      addrBox.style.display = "none"; addrBox.innerHTML = "";
+    }
     document.getElementById("pr-footer").textContent = "Obrigado pela preferência!";
     window.print();
   }
@@ -634,7 +769,7 @@
 
     document.getElementById("cat-order-list").innerHTML = cats.length ? cats.map(function (c, idx) {
       var off = disabled.indexOf(c) !== -1;
-      return '<div class="reorder-row" data-cat="' + escapeHtml(c) + '"><span class="lbl">' + escapeHtml(c) + '</span>' +
+      return '<div class="reorder-row" data-cat="' + escapeHtml(c) + '"><span class="drag-handle">⠿</span><span class="lbl">' + escapeHtml(c) + '</span>' +
         '<label class="switch" title="Ativar/desativar categoria"><input type="checkbox" class="cat-toggle" ' + (off ? '' : 'checked') + '><span class="slider"></span></label>' +
         '<span class="arrows"><button type="button" class="cat-up" ' + (idx === 0 ? 'disabled' : '') + '>↑</button><button type="button" class="cat-down" ' + (idx === cats.length - 1 ? 'disabled' : '') + '>↓</button></span></div>';
     }).join("") : '<div class="empty-hint">Adicione itens ao cardápio para organizar as categorias.</div>';
@@ -647,17 +782,18 @@
         try { await api("/api/config", { method: "PUT", body: { disabledCategories: newDisabled } }); staffConfigCache.disabledCategories = newDisabled; renderMenuByCategory(); loadPublicMenuAndConfig(); } catch (e) { showToast(e.message); }
       });
     });
+    enableDragReorder(document.getElementById("cat-order-list"), ".reorder-row", function (el) { return el.dataset.cat; }, applyCategoryOrder);
 
     document.getElementById("menu-by-category").innerHTML = cats.map(function (cat) {
       var items = byCat[cat];
-      return '<div class="menu-cat-section"><h4>' + escapeHtml(cat) + '</h4>' + items.map(function (it, idx) {
+      return '<div class="menu-cat-section"><h4>' + escapeHtml(cat) + '</h4><div class="item-list" data-cat="' + escapeHtml(cat) + '">' + items.map(function (it, idx) {
         return '<div class="item-row' + (it.active === false ? ' inactive' : '') + '" data-id="' + it.id + '" data-cat="' + escapeHtml(cat) + '">' +
-          '<span class="thumb" style="' + bgImgStyle(it.image) + '"></span>' +
+          '<span class="drag-handle">⠿</span><span class="thumb" style="' + bgImgStyle(it.image) + '"></span>' +
           '<span class="info"><span class="nm">' + escapeHtml(it.name) + '</span><br><span class="meta">' + fmtMoney(it.price) + (it.stock && it.stock.enabled ? ' · estoque: ' + it.stock.quantity : '') + (it.addonGroups && it.addonGroups.length ? ' · ' + it.addonGroups.length + ' grupo(s)' : '') + '</span></span>' +
           '<label class="switch" title="Ativar/desativar item"><input type="checkbox" class="item-toggle" ' + (it.active === false ? '' : 'checked') + '><span class="slider"></span></label>' +
           '<span class="arrows"><button type="button" class="it-up" ' + (idx === 0 ? 'disabled' : '') + '>↑</button><button type="button" class="it-down" ' + (idx === items.length - 1 ? 'disabled' : '') + '>↓</button></span>' +
           '<button class="btn btn-ghost btn-small it-edit">Editar</button><button class="btn btn-danger btn-small it-del">Excluir</button></div>';
-      }).join("") + '</div>';
+      }).join("") + '</div></div>';
     }).join("");
     document.querySelectorAll(".item-row").forEach(function (row) {
       var id = row.dataset.id, cat = row.dataset.cat;
@@ -674,18 +810,46 @@
         try { await api("/api/menu/" + id, { method: "DELETE" }); renderMenuByCategory(); loadStaffMenu(); loadPublicMenuAndConfig(); } catch (e) { showToast(e.message); }
       });
     });
+    document.querySelectorAll(".item-list").forEach(function (list) {
+      enableDragReorder(list, ".item-row", function (el) { return el.dataset.id; }, applyItemOrder);
+    });
     var cats2 = Array.from(new Set(r.menu.map(function (m) { return m.category; })));
     document.getElementById("cat-list").innerHTML = cats2.map(function (c) { return '<option value="' + escapeHtml(c) + '">'; }).join("");
+  }
+  // arrasta e solta genérico (mouse + touch via HTML5 drag events)
+  function enableDragReorder(container, itemSelector, getKey, onDrop) {
+    var draggedEl = null;
+    container.querySelectorAll(itemSelector).forEach(function (el) {
+      el.setAttribute("draggable", "true");
+      el.addEventListener("dragstart", function () { draggedEl = el; setTimeout(function () { el.classList.add("dragging"); }, 0); });
+      el.addEventListener("dragend", function () { el.classList.remove("dragging"); draggedEl = null; });
+      el.addEventListener("dragover", function (e) { e.preventDefault(); });
+      el.addEventListener("drop", function (e) {
+        e.preventDefault();
+        if (!draggedEl || draggedEl === el) return;
+        var items = Array.from(container.querySelectorAll(itemSelector));
+        var fromIdx = items.indexOf(draggedEl), toIdx = items.indexOf(el);
+        if (fromIdx < toIdx) el.after(draggedEl); else el.before(draggedEl);
+        var newOrder = Array.from(container.querySelectorAll(itemSelector)).map(getKey);
+        onDrop(newOrder);
+      });
+    });
+  }
+  async function applyCategoryOrder(newOrder) {
+    try { await api("/api/config", { method: "PUT", body: { categoryOrder: newOrder } }); renderMenuByCategory(); loadPublicMenuAndConfig(); } catch (e) { showToast(e.message); }
+  }
+  async function applyItemOrder(ids) {
+    try { await api("/api/menu/reorder", { method: "PUT", body: { ids: ids } }); renderMenuByCategory(); loadPublicMenuAndConfig(); } catch (e) { showToast(e.message); }
   }
   async function moveCategory(cats, idx, dir) {
     var newIdx = idx + dir; if (newIdx < 0 || newIdx >= cats.length) return;
     var arr = cats.slice(); var tmp = arr[idx]; arr[idx] = arr[newIdx]; arr[newIdx] = tmp;
-    try { await api("/api/config", { method: "PUT", body: { categoryOrder: arr } }); renderMenuByCategory(); loadPublicMenuAndConfig(); } catch (e) { showToast(e.message); }
+    applyCategoryOrder(arr);
   }
   async function moveItem(items, idx, dir) {
     var newIdx = idx + dir; if (newIdx < 0 || newIdx >= items.length) return;
     var arr = items.map(function (i) { return i.id; }); var tmp = arr[idx]; arr[idx] = arr[newIdx]; arr[newIdx] = tmp;
-    try { await api("/api/menu/reorder", { method: "PUT", body: { ids: arr } }); renderMenuByCategory(); loadPublicMenuAndConfig(); } catch (e) { showToast(e.message); }
+    applyItemOrder(arr);
   }
 
   // ---- grupos de complementos (Configurações do Cardápio) ----
@@ -788,10 +952,11 @@
     });
   }
   document.getElementById("im-stock-enabled").addEventListener("change", function () { document.getElementById("im-stock-qty-box").style.display = this.checked ? "block" : "none"; });
-  document.getElementById("im-image-input").addEventListener("change", async function () {
-    if (!this.files[0]) return;
-    itemModalImage = await fileToResizedDataUrl(this.files[0], true, 480);
-    document.getElementById("im-image-preview").style.cssText = bgImgStyle(itemModalImage);
+  document.getElementById("btn-pick-item-image").addEventListener("click", function () {
+    openImagePicker(function (dataUrl) {
+      itemModalImage = dataUrl;
+      document.getElementById("im-image-preview").style.cssText = bgImgStyle(itemModalImage);
+    });
   });
   document.getElementById("im-cancel").addEventListener("click", function () { document.getElementById("item-modal").classList.remove("show"); });
   document.getElementById("im-save").addEventListener("click", async function () {
@@ -833,6 +998,42 @@
       showToast(r.created + " criado(s), " + r.updated + " atualizado(s)." + (r.unknownGroups.length ? " Grupos não encontrados: " + r.unknownGroups.join(", ") : ""));
       renderMenuByCategory(); loadStaffMenu(); loadPublicMenuAndConfig();
     } catch (e) { showToast(e.message); }
+    this.value = "";
+  });
+
+  document.getElementById("btn-export-groups-csv").addEventListener("click", function () {
+    fetch(API + "/api/addon-groups/export", { headers: { Authorization: "Bearer " + token } }).then(function (res) { return res.blob(); }).then(function (blob) {
+      var link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "complementos-brothers.csv"; link.click();
+    }).catch(function () { showToast("Erro ao exportar."); });
+  });
+  document.getElementById("btn-import-groups-csv").addEventListener("change", async function () {
+    if (!this.files[0]) return;
+    var text = await this.files[0].text();
+    try {
+      var r = await api("/api/addon-groups/import", { method: "POST", body: { csv: text } });
+      showToast(r.created + " grupo(s) criado(s), " + r.updated + " atualizado(s).");
+      staffConfigCache = (await api("/api/config")).config;
+      renderAddonGroupsList(); renderMenuByCategory(); loadPublicMenuAndConfig();
+    } catch (e) { showToast(e.message); }
+    this.value = "";
+  });
+
+  document.getElementById("btn-download-backup").addEventListener("click", function () {
+    fetch(API + "/api/menu/backup", { headers: { Authorization: "Bearer " + token } }).then(function (res) { return res.blob(); }).then(function (blob) {
+      var link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "backup-brothers.json"; link.click();
+    }).catch(function () { showToast("Erro ao gerar backup."); });
+  });
+  document.getElementById("btn-restore-backup").addEventListener("change", async function () {
+    if (!this.files[0]) return;
+    if (!confirm("Restaurar esse backup vai substituir todo o cardápio, complementos e imagens atuais. Continuar?")) { this.value = ""; return; }
+    try {
+      var text = await this.files[0].text();
+      var parsed = JSON.parse(text);
+      var r = await api("/api/menu/backup/restore", { method: "POST", body: parsed });
+      showToast("Backup restaurado — " + r.itemCount + " itens.");
+      staffConfigCache = (await api("/api/config")).config;
+      renderMenuByCategory(); loadStaffMenu(); loadConfigForm(); loadPublicMenuAndConfig();
+    } catch (e) { showToast("Erro ao restaurar: " + e.message); }
     this.value = "";
   });
 
@@ -980,11 +1181,11 @@
     document.getElementById("cfg-cover-preview").style.cssText = bgImgStyle(dataUrl);
     document.getElementById("cfg-cover-preview").dataset.value = dataUrl;
   });
-  document.getElementById("cfg-logo-input").addEventListener("change", async function () {
-    if (!this.files[0]) return;
-    var dataUrl = await fileToResizedDataUrl(this.files[0], true, 400);
-    document.getElementById("cfg-logo-preview").style.cssText = bgImgStyle(dataUrl);
-    document.getElementById("cfg-logo-preview").dataset.value = dataUrl;
+  document.getElementById("btn-pick-logo").addEventListener("click", function () {
+    openImagePicker(function (dataUrl) {
+      document.getElementById("cfg-logo-preview").style.cssText = bgImgStyle(dataUrl);
+      document.getElementById("cfg-logo-preview").dataset.value = dataUrl;
+    });
   });
   document.getElementById("cfg-sound-input").addEventListener("change", async function () {
     if (!this.files[0]) return;

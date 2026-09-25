@@ -1,5 +1,36 @@
 # Brothers — sistema completo (nuvem + desktop)
 
+## Novidades da v3
+
+- **Link da equipe fixo**: pra ele parar de mudar toda vez que o Render reinicia (disco
+  não persistente), defina uma variável de ambiente `STAFF_SLUG` no Render com um valor
+  fixo que você escolher (ex: `brothers2024equipe`). O link vira sempre
+  `SEU_DOMINIO/?staff=brothers2024equipe`. Sem essa variável, o sistema continua gerando
+  um código aleatório — pra descobrir qual é, olhe os "Logs" do serviço no Render logo
+  após o deploy (a primeira linha mostra o link) ou abra `SEU_DOMINIO/api/public/config`
+  e procure por `staffSlug`.
+- **Número do pedido agora é aleatório** (3 dígitos), não mais sequencial.
+- **Estoque escondido do cliente**: só admin e garçom veem a quantidade; o cliente só
+  vê "Indisponível" quando acabar.
+- **Nota impressa detalhada**: mostra preço de cada item, cada complemento separado, taxa
+  de entrega, e — se for delivery — um quadro grande no final com endereço, bairro, nome
+  e telefone do cliente.
+- **Arrastar pra reordenar**: categorias e itens do cardápio agora têm uma alcinha (⠿)
+  pra arrastar direto, além das setinhas (que ficaram com mais contraste).
+- **Seletor de imagem com biblioteca e corte manual**: ao escolher a foto de um item ou
+  do perfil, abre uma janela com as imagens já usadas no cardápio (evita reenviar a
+  mesma foto) e um cortador com zoom e arraste — ou um botão "usar sem ajustar" pra
+  pular direto pro corte automático.
+- **Backup completo**: em Configurações, baixa um `.json` com cardápio, categorias,
+  grupos de complementos e todas as fotos. Dá pra restaurar depois pelo mesmo lugar.
+- **CSV agora usa ponto e vírgula** (`;`) como separador, não vírgula — isso evita o bug
+  de a descrição do item (que geralmente tem vírgula) quebrar a importação, e já é o
+  padrão do Excel em português. Se a lista de grupos de complementos aparecer numa
+  célula só, os nomes ficam separados por `|` (barra vertical) dentro dela.
+- **Grupos de complementos também têm import/export CSV** agora, em Cardápio → Grupos
+  de complementos. Colunas: `grupo;tipo;opcao;preco` (uma linha por opção; `tipo` é
+  `single` ou `multi`).
+
 ## Novidades da v2
 
 - **Link da equipe escondido**: não tem mais link nenhum no cardápio público. Vá em

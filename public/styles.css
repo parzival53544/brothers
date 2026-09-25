@@ -177,7 +177,13 @@ th{ color:var(--ink-soft); font-size:12px; text-transform:uppercase; letter-spac
 .reorder-row{ display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px dashed var(--line); }
 .reorder-row .lbl{ flex:1; font-size:14px; }
 .reorder-row .arrows{ display:flex; gap:4px; }
-.reorder-row .arrows button{ width:26px; height:26px; border-radius:6px; border:1px solid var(--line); background:var(--cream); cursor:pointer; }
+.reorder-row .arrows button{ width:28px; height:28px; border-radius:7px; border:1.5px solid var(--gold); background:var(--paper); color:var(--wine); font-weight:700; cursor:pointer; }
+:root[data-theme="dark"] .reorder-row .arrows button{ color:var(--gold); }
+@media (prefers-color-scheme:dark){ .reorder-row .arrows button{ color:var(--gold); } }
+.reorder-row .arrows button:disabled{ opacity:.35; cursor:default; }
+.drag-handle{ cursor:grab; color:var(--ink-soft); font-size:16px; padding:0 4px; user-select:none; flex-shrink:0; }
+.reorder-row.dragging, .item-row.dragging{ opacity:.4; }
+.reorder-row[draggable=true], .item-row[draggable=true]{ cursor:default; }
 .menu-cat-section{ margin-bottom:22px; }
 .menu-cat-section h4{ font-size:13px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
 .item-row{ display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
@@ -187,7 +193,10 @@ th{ color:var(--ink-soft); font-size:12px; text-transform:uppercase; letter-spac
 .item-row .info .nm{ font-weight:600; font-size:14px; }
 .item-row .info .meta{ font-size:12px; color:var(--ink-soft); }
 .item-row .arrows{ display:flex; gap:4px; }
-.item-row .arrows button{ width:24px; height:24px; border-radius:6px; border:1px solid var(--line); background:var(--cream); cursor:pointer; }
+.item-row .arrows button{ width:26px; height:26px; border-radius:7px; border:1.5px solid var(--gold); background:var(--paper); color:var(--wine); font-weight:700; cursor:pointer; }
+:root[data-theme="dark"] .item-row .arrows button{ color:var(--gold); }
+@media (prefers-color-scheme:dark){ .item-row .arrows button{ color:var(--gold); } }
+.item-row .arrows button:disabled{ opacity:.35; cursor:default; }
 
 /* switch */
 .switch{ position:relative; display:inline-block; width:38px; height:22px; flex-shrink:0; }
@@ -223,6 +232,13 @@ th{ color:var(--ink-soft); font-size:12px; text-transform:uppercase; letter-spac
 :root[data-theme="dark"] .detail-price{ color:var(--gold); }
 @media (prefers-color-scheme:dark){ .detail-price{ color:var(--gold); } }
 
+.image-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(76px,1fr)); gap:8px; margin-top:8px; max-height:280px; overflow-y:auto; }
+.image-grid .pick-thumb{ width:100%; aspect-ratio:1/1; border-radius:8px; background-size:cover; background-position:center; background-color:var(--gray-bg); border:2px solid var(--line); cursor:pointer; }
+.image-grid .pick-thumb:hover{ border-color:var(--gold); }
+
+.crop-viewport{ width:280px; height:280px; max-width:100%; aspect-ratio:1/1; margin:0 auto; border-radius:10px; overflow:hidden; position:relative; background:var(--gray-bg); touch-action:none; border:1px solid var(--line); }
+.crop-viewport img{ position:absolute; top:0; left:0; max-width:none; user-select:none; -webkit-user-drag:none; }
+
 .toast{ position:fixed; bottom:20px; right:20px; background:var(--wine); color:var(--accent-text); padding:12px 18px; border-radius:8px; font-size:14px; z-index:100; opacity:0; transform:translateY(10px); transition:.25s; pointer-events:none; max-width:80vw; }
 .toast.show{ opacity:1; transform:translateY(0); }
 
@@ -235,5 +251,8 @@ th{ color:var(--ink-soft); font-size:12px; text-transform:uppercase; letter-spac
   #print-area .sub{ text-align:center; font-size:11px; margin-bottom:8px; }
   #print-area hr{ border:none; border-top:1px dashed #000; margin:6px 0; }
   #print-area .pline{ display:flex; justify-content:space-between; }
+  #print-area .pline.addon-line{ color:#333; font-size:11px; }
+  #print-area .pline.sub{ font-size:10px; color:#555; border-top:1px dotted #999; margin-bottom:4px; padding-top:2px; }
   #print-area .tot{ font-weight:bold; font-size:14px; }
+  #print-area .addr-block{ font-weight:bold; font-size:15px; line-height:1.5; border:2px solid #000; padding:6px; margin:6px 0; text-align:left; }
 }

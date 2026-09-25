@@ -41,11 +41,12 @@ function defaultData() {
       accentColor: "#B9862F", logoImage: "", coverImage: "",
       categoryOrder: [], disabledCategories: [], deliveryZones: [],
       addonGroups: [],
-      staffSlug: randomSlug(),
+      staffSlug: process.env.STAFF_SLUG || randomSlug(),
       notificationSound: "",
       timezone: "America/Manaus",
       businessHours: defaultBusinessHours(),
-      emergencyClosed: false
+      emergencyClosed: false,
+      imageLibrary: []
     }
   };
 }
@@ -57,12 +58,16 @@ function migrate(data) {
     accentColor: "#B9862F", logoImage: "", coverImage: "",
     categoryOrder: [], disabledCategories: [], deliveryZones: [],
     addonGroups: [], staffSlug: randomSlug(), notificationSound: "",
-    timezone: "America/Manaus", businessHours: defaultBusinessHours(), emergencyClosed: false
+    timezone: "America/Manaus", businessHours: defaultBusinessHours(), emergencyClosed: false,
+    imageLibrary: []
   }, data.config || {});
   if (!data.config.businessHours) data.config.businessHours = defaultBusinessHours();
   if (!data.config.staffSlug) data.config.staffSlug = randomSlug();
+  // STAFF_SLUG fixo por variável de ambiente sempre tem prioridade, pra sobreviver a redeploys sem disco persistente
+  if (process.env.STAFF_SLUG) data.config.staffSlug = process.env.STAFF_SLUG;
   if (!Array.isArray(data.config.addonGroups)) data.config.addonGroups = [];
   if (!Array.isArray(data.config.disabledCategories)) data.config.disabledCategories = [];
+  if (!Array.isArray(data.config.imageLibrary)) data.config.imageLibrary = [];
 
   data.menu = (data.menu || []).map((m, idx) => {
     const item = Object.assign({ order: idx, image: "", description: "", active: true, addonGroupIds: [], stock: { enabled: false, quantity: 0 } }, m);
@@ -126,11 +131,12 @@ function todayStr(d) {
   d = d || new Date();
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
-function nextDailyNumber() {
-  const t = todayStr();
-  if (db.dayCounter.date !== t) db.dayCounter = { date: t, count: 0 };
-  db.dayCounter.count += 1;
-  return db.dayCounter.count;
+// número aleatório (não sequencial) pro pedido, evitando repetir um número de um pedido ainda ativo
+function generateOrderNumber() {
+  let n, tries = 0;
+  const active = db.orders.filter((o) => o.status !== "finalizado" && o.status !== "recusado").map((o) => o.number);
+  do { n = Math.floor(100 + Math.random() * 900); tries++; } while (active.indexOf(n) !== -1 && tries < 30);
+  return n;
 }
 
 // ---------- horário de funcionamento ----------
@@ -175,7 +181,15 @@ function publicUser(u) { return { id: u.id, username: u.username, role: u.role, 
 function itemAddonGroups(item) {
   return (item.addonGroupIds || []).map((gid) => (db.config.addonGroups || []).find((g) => g.id === gid)).filter(Boolean);
 }
-function decorateItem(item) { return Object.assign({}, item, { addonGroups: itemAddonGroups(item) }); }
+function decorateItem(item, isPublic) {
+  const out = Object.assign({}, item, { addonGroups: itemAddonGroups(item) });
+  if (isPublic) {
+    // não revela a quantidade em estoque pro cliente, só se está disponível ou não
+    out.unavailable = !!(item.stock && item.stock.enabled && item.stock.quantity <= 0);
+    delete out.stock;
+  }
+  return out;
+}
 
 function sortedMenu(menu) {
   const catOrder = db.config.categoryOrder || [];
@@ -189,9 +203,9 @@ function sortedMenu(menu) {
 }
 function publicMenuList() {
   const disabled = db.config.disabledCategories || [];
-  return sortedMenu(db.menu).filter((m) => m.active !== false && disabled.indexOf(m.category) === -1).map(decorateItem);
+  return sortedMenu(db.menu).filter((m) => m.active !== false && disabled.indexOf(m.category) === -1).map((m) => decorateItem(m, true));
 }
-function staffMenuList() { return sortedMenu(db.menu).map(decorateItem); }
+function staffMenuList() { return sortedMenu(db.menu).map((m) => decorateItem(m, false)); }
 
 function resolveOrderLines(lines) {
   const resolvedLines = [];
@@ -227,27 +241,40 @@ function deliveryFeeFor(neighborhood) {
 }
 
 // ---------- CSV ----------
+// Delimitador ; (ponto e vírgula) em vez de vírgula: evita quebrar quando a
+// descrição do item tem vírgula, e já é o padrão do Excel em português.
+const CSV_DELIM = ";";
+const MULTI_SEP = "|"; // separador interno pra listas dentro de um campo (ex: nomes de grupos)
 function csvEscape(v) {
   v = v === undefined || v === null ? "" : String(v);
-  if (/[",\n;]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+  if (v.indexOf(CSV_DELIM) !== -1 || v.indexOf('"') !== -1 || v.indexOf("\n") !== -1) return '"' + v.replace(/"/g, '""') + '"';
   return v;
 }
 function menuToCsv() {
   const header = ["categoria", "nome", "descricao", "preco", "ativo", "estoque_ativo", "estoque_qtd", "grupos_complementos"];
-  const rows = [header.join(",")];
+  const rows = [header.join(CSV_DELIM)];
   sortedMenu(db.menu).forEach((it) => {
-    const groupNames = itemAddonGroups(it).map((g) => g.name).join(";");
+    const groupNames = itemAddonGroups(it).map((g) => g.name).join(MULTI_SEP);
     rows.push([
       csvEscape(it.category), csvEscape(it.name), csvEscape(it.description || ""), it.price,
       it.active === false ? "nao" : "sim",
       it.stock && it.stock.enabled ? "sim" : "nao",
       it.stock ? it.stock.quantity : 0,
       csvEscape(groupNames)
-    ].join(","));
+    ].join(CSV_DELIM));
   });
   return rows.join("\n");
 }
-function parseCsv(text) {
+function groupsToCsv() {
+  const header = ["grupo", "tipo", "opcao", "preco"];
+  const rows = [header.join(CSV_DELIM)];
+  (db.config.addonGroups || []).forEach((g) => {
+    g.options.forEach((o) => { rows.push([csvEscape(g.name), g.type, csvEscape(o.name), o.price].join(CSV_DELIM)); });
+  });
+  return rows.join("\n");
+}
+function parseCsv(text, delim) {
+  delim = delim || CSV_DELIM;
   const rows = [];
   let row = [], field = "", inQuotes = false;
   for (let i = 0; i < text.length; i++) {
@@ -258,7 +285,7 @@ function parseCsv(text) {
       else field += c;
     } else {
       if (c === '"') inQuotes = true;
-      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === delim) { row.push(field); field = ""; }
       else if (c === "\n" || c === "\r") { if (c === "\r" && next === "\n") i++; row.push(field); rows.push(row); row = []; field = ""; }
       else field += c;
     }
@@ -336,7 +363,7 @@ app.post("/api/public/orders", (req, res) => {
   const total = itemsTotal + (deliveryInfo ? deliveryInfo.fee : 0);
 
   const order = {
-    id: uid(), number: nextDailyNumber(), source: "publico", lines: resolvedLines, type,
+    id: uid(), number: generateOrderNumber(), source: "publico", lines: resolvedLines, type,
     customerName: String(customerName).slice(0, 120), customerPhone: String(customerPhone).slice(0, 40),
     delivery: deliveryInfo, total,
     payment: { method, status: method === "pix_online" ? "aguardando" : "nao_aplica" },
@@ -436,7 +463,7 @@ app.post("/api/menu/import", requireAuth, (req, res) => {
     const active = (r[idx("ativo")] || "sim").trim().toLowerCase() !== "nao";
     const stockEnabled = (r[idx("estoque_ativo")] || "nao").trim().toLowerCase() === "sim";
     const stockQty = parseInt(r[idx("estoque_qtd")], 10) || 0;
-    const groupNames = (r[idx("grupos_complementos")] || "").split(";").map((s) => s.trim()).filter(Boolean);
+    const groupNames = (r[idx("grupos_complementos")] || "").split(MULTI_SEP).map((s) => s.trim()).filter(Boolean);
     const groupIds = [];
     groupNames.forEach((gn) => {
       const g = (db.config.addonGroups || []).find((gg) => gg.name.toLowerCase() === gn.toLowerCase());
@@ -459,6 +486,92 @@ app.post("/api/menu/import", requireAuth, (req, res) => {
   res.json({ ok: true, created, updated, unknownGroups: Array.from(unknownGroups) });
 });
 
+// ---------- exportar / importar grupos de complementos (CSV) ----------
+app.get("/api/addon-groups/export", requireAuth, (req, res) => {
+  res.set({ "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="complementos-brothers.csv"' });
+  res.send("\uFEFF" + groupsToCsv());
+});
+app.post("/api/addon-groups/import", requireAuth, (req, res) => {
+  const { csv } = req.body || {};
+  if (typeof csv !== "string" || !csv.trim()) return res.status(400).json({ error: "arquivo CSV vazio" });
+  const rows = parseCsv(csv.trim());
+  if (!rows.length) return res.status(400).json({ error: "CSV sem linhas" });
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const idx = (name) => header.indexOf(name);
+  const order = []; // nomes de grupo na ordem em que aparecem
+  const byName = {};
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const gname = (r[idx("grupo")] || "").trim();
+    if (!gname) continue;
+    const type = (r[idx("tipo")] || "multi").trim().toLowerCase() === "single" ? "single" : "multi";
+    const optName = (r[idx("opcao")] || "").trim();
+    const price = parseFloat(r[idx("preco")]) || 0;
+    if (!byName[gname]) { byName[gname] = { name: gname, type, options: [] }; order.push(gname); }
+    if (optName) byName[gname].options.push({ id: uid(), name: optName, price });
+  }
+  const existing = db.config.addonGroups || [];
+  let created = 0, updated = 0;
+  order.forEach((gname) => {
+    const incoming = byName[gname];
+    const found = existing.find((g) => g.name.toLowerCase() === gname.toLowerCase());
+    if (found) { found.type = incoming.type; found.options = incoming.options; updated++; }
+    else { existing.push({ id: uid(), name: incoming.name, type: incoming.type, options: incoming.options }); created++; }
+  });
+  db.config.addonGroups = existing;
+  persist();
+  broadcast("config_changed", {});
+  res.json({ ok: true, created, updated });
+});
+
+// ---------- backup completo (cardápio + complementos + imagens) ----------
+app.get("/api/menu/backup", requireAuth, (req, res) => {
+  const backup = {
+    type: "brothers-backup", version: 1, exportedAt: new Date().toISOString(),
+    menu: db.menu, addonGroups: db.config.addonGroups, categoryOrder: db.config.categoryOrder,
+    disabledCategories: db.config.disabledCategories, imageLibrary: db.config.imageLibrary,
+    logoImage: db.config.logoImage, coverImage: db.config.coverImage
+  };
+  res.set({ "Content-Type": "application/json; charset=utf-8", "Content-Disposition": 'attachment; filename="backup-brothers-' + todayStr() + '.json"' });
+  res.send(JSON.stringify(backup, null, 2));
+});
+app.post("/api/menu/backup/restore", requireAuth, requireAdmin, (req, res) => {
+  const b = req.body || {};
+  if (b.type !== "brothers-backup" || !Array.isArray(b.menu)) return res.status(400).json({ error: "arquivo de backup inválido" });
+  db.menu = b.menu;
+  if (Array.isArray(b.addonGroups)) db.config.addonGroups = b.addonGroups;
+  if (Array.isArray(b.categoryOrder)) db.config.categoryOrder = b.categoryOrder;
+  if (Array.isArray(b.disabledCategories)) db.config.disabledCategories = b.disabledCategories;
+  if (Array.isArray(b.imageLibrary)) db.config.imageLibrary = b.imageLibrary;
+  if (typeof b.logoImage === "string") db.config.logoImage = b.logoImage;
+  if (typeof b.coverImage === "string") db.config.coverImage = b.coverImage;
+  persist();
+  broadcast("menu_changed", {});
+  broadcast("config_changed", {});
+  res.json({ ok: true, itemCount: db.menu.length });
+});
+
+// ---------- biblioteca de imagens ----------
+app.get("/api/image-library", requireAuth, (req, res) => res.json({ images: db.config.imageLibrary || [] }));
+app.post("/api/image-library", requireAuth, (req, res) => {
+  const { image, name } = req.body || {};
+  if (typeof image !== "string" || !image.startsWith("data:image")) return res.status(400).json({ error: "imagem inválida" });
+  if (!db.config.imageLibrary) db.config.imageLibrary = [];
+  // evita duplicar a mesma imagem
+  const dup = db.config.imageLibrary.find((im) => im.image === image);
+  if (dup) return res.status(201).json({ image: dup });
+  const entry = { id: uid(), name: (name || "imagem").slice(0, 80), image: image.slice(0, 3000000) };
+  db.config.imageLibrary.unshift(entry);
+  if (db.config.imageLibrary.length > 80) db.config.imageLibrary = db.config.imageLibrary.slice(0, 80);
+  persist();
+  res.status(201).json({ image: entry });
+});
+app.delete("/api/image-library/:id", requireAuth, (req, res) => {
+  db.config.imageLibrary = (db.config.imageLibrary || []).filter((im) => im.id !== req.params.id);
+  persist();
+  res.json({ ok: true });
+});
+
 // ---------- pedidos (autenticado) ----------
 app.get("/api/orders", requireAuth, (req, res) => {
   let list = db.orders;
@@ -479,7 +592,7 @@ app.post("/api/orders", requireAuth, (req, res) => {
   const itemsTotal = resolvedLines.reduce((s, l) => s + l.price * l.qty, 0);
   const total = itemsTotal + (deliveryInfo ? deliveryInfo.fee : 0);
   const order = {
-    id: uid(), number: nextDailyNumber(), source: "balcao", lines: resolvedLines, type,
+    id: uid(), number: generateOrderNumber(), source: "balcao", lines: resolvedLines, type,
     customerName: (customerName || "").slice(0, 120), customerPhone: (customerPhone || "").slice(0, 40), delivery: deliveryInfo, total,
     payment: { method: "balcao", status: "nao_aplica" }, status: "producao",
     createdAt: new Date().toISOString(), acceptedAt: null, finalizedAt: null, stockReturned: false
@@ -635,4 +748,5 @@ app.get(/^\/(?!api\/).*/, (req, res) => {
 
 app.listen(PORT, () => {
   console.log("Brothers backend rodando na porta " + PORT);
+  console.log("Link da equipe (login): /?staff=" + db.config.staffSlug);
 });
