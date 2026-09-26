@@ -239,6 +239,16 @@ th{ color:var(--ink-soft); font-size:12px; text-transform:uppercase; letter-spac
 .crop-viewport{ width:280px; height:280px; max-width:100%; aspect-ratio:1/1; margin:0 auto; border-radius:10px; overflow:hidden; position:relative; background:var(--gray-bg); touch-action:none; border:1px solid var(--line); }
 .crop-viewport img{ position:absolute; top:0; left:0; max-width:none; user-select:none; -webkit-user-drag:none; }
 
+.wa-log{ max-height:360px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; }
+.wa-msg{ max-width:75%; padding:8px 12px; border-radius:12px; font-size:13px; line-height:1.4; }
+.wa-msg.in{ background:var(--gray-bg); align-self:flex-start; border-bottom-left-radius:2px; }
+.wa-msg.out{ background:var(--green-bg); align-self:flex-end; border-bottom-right-radius:2px; }
+.wa-msg .meta{ font-size:10px; color:var(--ink-soft); margin-top:3px; }
+.wa-status-pill{ display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border-radius:20px; font-weight:700; font-size:13px; }
+.wa-status-pill.conectado{ background:var(--green-bg); color:var(--green); }
+.wa-status-pill.aguardando_qr{ background:var(--amber-bg); color:var(--amber); }
+.wa-status-pill.desconectado{ background:var(--danger-bg); color:var(--danger); }
+
 .toast{ position:fixed; bottom:20px; right:20px; background:var(--wine); color:var(--accent-text); padding:12px 18px; border-radius:8px; font-size:14px; z-index:100; opacity:0; transform:translateY(10px); transition:.25s; pointer-events:none; max-width:80vw; }
 .toast.show{ opacity:1; transform:translateY(0); }
 

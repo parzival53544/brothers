@@ -141,6 +141,33 @@
       </div>
     </section>
 
+    <section id="view-whatsapp" class="view">
+      <div class="card">
+        <div class="section-title">Conexão</div>
+        <div class="notice">Automação não-oficial (Baileys). Use um número secundário pra testar antes de ligar o WhatsApp principal do restaurante — números que enviam muitas mensagens automáticas correm risco de banimento.</div>
+        <div id="wa-status-box"></div>
+        <div id="wa-qr-box" style="display:none; text-align:center; margin:14px 0;">
+          <img id="wa-qr-img" alt="QR Code" style="width:220px; height:220px; border-radius:10px; border:1px solid var(--line);">
+          <div class="empty-hint">Abra o WhatsApp no celular do restaurante → Aparelhos conectados → Conectar um aparelho, e escaneie.</div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-danger btn-small" id="btn-wa-logout">Desconectar</button>
+          <label class="switch" style="margin-left:auto;" title="Bot responde mensagens automaticamente"><input type="checkbox" id="wa-bot-toggle"><span class="slider"></span></label>
+          <span style="align-self:center; font-size:13px; color:var(--ink-soft);">Bot de respostas automáticas</span>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="section-title">Mensagens recentes</div>
+        <div class="wa-log" id="wa-messages"></div>
+        <div class="field-row" style="margin-top:12px;">
+          <input type="text" id="wa-send-phone" placeholder="Número (com DDD)" style="max-width:180px;">
+          <input type="text" id="wa-send-text" placeholder="Mensagem">
+          <button class="btn btn-primary btn-small" id="btn-wa-send" style="max-width:100px;">Enviar</button>
+        </div>
+      </div>
+    </section>
+
     <section id="view-config" class="view">
       <div class="card">
         <div class="section-title">Aparência</div>

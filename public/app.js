@@ -293,6 +293,14 @@
       var active = document.querySelector("#staff-screen .view.active");
       if (active && active.id === "view-cardapio") renderMenuByCategory();
     });
+    evtSource.addEventListener("whatsapp_status", function (e) {
+      if (me.role !== "admin") return;
+      try { renderWaStatus(JSON.parse(e.data)); } catch (err) {}
+    });
+    evtSource.addEventListener("whatsapp_message", function () {
+      var active = document.querySelector("#staff-screen .view.active");
+      if (active && active.id === "view-whatsapp") refreshWaMessages();
+    });
     evtSource.onerror = function () {};
   }
 
@@ -302,6 +310,7 @@
     { id: "cardapio", label: "Cardápio", roles: ["admin", "garcom"] },
     { id: "historico", label: "Histórico", roles: ["admin", "garcom"] },
     { id: "relatorios", label: "Relatórios", roles: ["admin"] },
+    { id: "whatsapp", label: "WhatsApp", roles: ["admin"] },
     { id: "config", label: "Configurações", roles: ["admin"] }
   ];
   function buildStaffTabs() {
@@ -322,6 +331,7 @@
     if (id === "cardapio") renderMenuByCategory();
     if (id === "historico") renderHistorico();
     if (id === "relatorios") applyReportRange("today");
+    if (id === "whatsapp") loadWhatsAppView();
     if (id === "config") { loadConfigForm(); renderUsersTable(); }
   }
 
@@ -614,10 +624,12 @@
   function orderCardHtml(o) {
     var advLabel = o.status === "producao" ? "Marcar como pronto" : "Finalizar pedido";
     var hasPhone = !!digitsOnly(o.customerPhone);
+    var showDispatch = o.status === "pronto" && o.type === "delivery" && !o.dispatched;
     return '<div class="order-card" data-id="' + o.id + '" data-status="' + o.status + '" data-phone="' + digitsOnly(o.customerPhone) + '"><div class="oc-top"><div><div class="num">#' + String(o.number).padStart(3, "0") + '</div>' +
-      '<div class="meta">' + fmtDateTime(o.createdAt) + (o.customerName ? " · " + escapeHtml(o.customerName) : "") + '</div></div><span class="tag">' + typeLabel(o.type) + '</span></div>' +
+      '<div class="meta">' + fmtDateTime(o.createdAt) + (o.customerName ? " · " + escapeHtml(o.customerName) : "") + '</div></div><span class="tag">' + typeLabel(o.type) + (o.dispatched ? ' · saiu p/ entrega' : '') + '</span></div>' +
       '<div class="items">' + escapeHtml(lineItemsText(o)) + '</div>' + addressLine(o) + '<div class="foot"><span class="amt">' + fmtMoney(o.total) + '</span></div>' +
       '<div class="actions"><button class="btn btn-primary btn-small adv">' + advLabel + '</button>' +
+      (showDispatch ? '<button class="btn btn-ghost btn-small dispatch">🛵 Saiu para entrega</button>' : '') +
       '<button class="btn btn-ghost btn-small edt">Editar</button><button class="btn btn-ghost btn-small prt">Imprimir</button>' +
       (hasPhone ? '<button class="btn btn-ghost btn-small notify">Avisar cliente</button>' : '') +
       '<button class="btn btn-danger btn-small del">Cancelar</button></div></div>';
@@ -626,6 +638,9 @@
     document.querySelectorAll("#col-producao .order-card, #col-pronto .order-card").forEach(function (card) {
       var id = card.dataset.id;
       var advBtn = card.querySelector(".adv"); if (advBtn) advBtn.addEventListener("click", function () { advanceStatus(id, card.dataset.status); });
+      var dispBtn = card.querySelector(".dispatch"); if (dispBtn) dispBtn.addEventListener("click", async function () {
+        try { await api("/api/orders/" + id + "/dispatch", { method: "PATCH" }); showToast("Cliente avisado que o pedido saiu para entrega."); renderPedidosBoard(); } catch (e) { showToast(e.message); }
+      });
       var editBtn = card.querySelector(".edt"); if (editBtn) editBtn.addEventListener("click", function () { loadOrderForEdit(id); });
       var printBtn = card.querySelector(".prt"); if (printBtn) printBtn.addEventListener("click", function () { var o = allOrders.find(function (x) { return x.id === id; }); if (o) printReceipt(o); });
       var notifyBtn = card.querySelector(".notify"); if (notifyBtn) notifyBtn.addEventListener("click", function () {
@@ -643,6 +658,54 @@
     var next = current === "producao" ? "pronto" : "finalizado";
     try { await api("/api/orders/" + id + "/status", { method: "PATCH", body: { status: next } }); renderPedidosBoard(); } catch (e) { showToast(e.message); }
   }
+
+  // ===================== WHATSAPP (Baileys) =====================
+  async function loadWhatsAppView() {
+    await refreshWaStatus();
+    await refreshWaMessages();
+    document.getElementById("wa-bot-toggle").checked = !!(staffConfigCache && staffConfigCache.whatsappBotEnabled);
+  }
+  function renderWaStatus(data) {
+    var box = document.getElementById("wa-status-box");
+    var labels = { conectado: "🟢 Conectado", aguardando_qr: "🟡 Aguardando leitura do QR Code", desconectado: "🔴 Desconectado" };
+    box.innerHTML = '<span class="wa-status-pill ' + data.status + '">' + (labels[data.status] || data.status) + '</span>';
+    document.getElementById("wa-qr-box").style.display = data.status === "aguardando_qr" && data.qr ? "block" : "none";
+    if (data.qr) document.getElementById("wa-qr-img").src = data.qr;
+  }
+  async function refreshWaStatus() {
+    try { var r = await api("/api/whatsapp/status"); renderWaStatus(r); } catch (e) {}
+  }
+  async function refreshWaMessages() {
+    try {
+      var r = await api("/api/whatsapp/messages");
+      renderWaMessages(r.messages);
+    } catch (e) {}
+  }
+  function renderWaMessages(messages) {
+    var wrap = document.getElementById("wa-messages");
+    if (!messages.length) { wrap.innerHTML = '<div class="empty-hint">Nenhuma mensagem ainda.</div>'; return; }
+    wrap.innerHTML = messages.map(function (m) {
+      return '<div class="wa-msg ' + m.direction + '">' + escapeHtml(m.text) + '<div class="meta">' + (m.direction === "in" ? m.phone : "você") + ' · ' + fmtDateTime(m.at) + '</div></div>';
+    }).join("");
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+  document.getElementById("btn-wa-logout").addEventListener("click", async function () {
+    if (!confirm("Desconectar o WhatsApp? Você vai precisar escanear o QR Code de novo.")) return;
+    try { await api("/api/whatsapp/logout", { method: "POST" }); showToast("Desconectado."); refreshWaStatus(); } catch (e) { showToast(e.message); }
+  });
+  document.getElementById("wa-bot-toggle").addEventListener("change", async function () {
+    try { await api("/api/config", { method: "PUT", body: { whatsappBotEnabled: this.checked } }); staffConfigCache.whatsappBotEnabled = this.checked; showToast(this.checked ? "Bot ativado." : "Bot desativado."); } catch (e) { showToast(e.message); }
+  });
+  document.getElementById("btn-wa-send").addEventListener("click", async function () {
+    var phone = document.getElementById("wa-send-phone").value.trim();
+    var text = document.getElementById("wa-send-text").value.trim();
+    if (!phone || !text) { showToast("Preencha número e mensagem."); return; }
+    try {
+      await api("/api/whatsapp/send", { method: "POST", body: { phone: phone, text: text } });
+      document.getElementById("wa-send-text").value = "";
+      refreshWaMessages();
+    } catch (e) { showToast(e.message); }
+  });
 
   // ===================== NOVO PEDIDO (balcão) =====================
   var currentOrder = { type: "local", lines: [] };

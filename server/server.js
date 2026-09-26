@@ -6,6 +6,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const createWhatsApp = require("./whatsapp");
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "brothers-dev-secret-troque-isso";
@@ -46,7 +47,8 @@ function defaultData() {
       timezone: "America/Manaus",
       businessHours: defaultBusinessHours(),
       emergencyClosed: false,
-      imageLibrary: []
+      imageLibrary: [],
+      whatsappBotEnabled: true
     }
   };
 }
@@ -59,7 +61,7 @@ function migrate(data) {
     categoryOrder: [], disabledCategories: [], deliveryZones: [],
     addonGroups: [], staffSlug: randomSlug(), notificationSound: "",
     timezone: "America/Manaus", businessHours: defaultBusinessHours(), emergencyClosed: false,
-    imageLibrary: []
+    imageLibrary: [], whatsappBotEnabled: true
   }, data.config || {});
   if (!data.config.businessHours) data.config.businessHours = defaultBusinessHours();
   if (!data.config.staffSlug) data.config.staffSlug = randomSlug();
@@ -80,7 +82,7 @@ function migrate(data) {
     delete item.addons;
     return item;
   });
-  data.orders = (data.orders || []).map((o) => Object.assign({ delivery: null, stockReturned: false }, o));
+  data.orders = (data.orders || []).map((o) => Object.assign({ delivery: null, stockReturned: false, dispatched: false, dispatchedAt: null }, o));
   return data;
 }
 
@@ -124,6 +126,31 @@ function broadcast(type, payload) {
   const msg = "event: " + type + "\ndata: " + JSON.stringify(payload || {}) + "\n\n";
   for (const res of sseClients) { try { res.write(msg); } catch (e) {} }
 }
+
+// ---------- WhatsApp (Baileys, não-oficial) ----------
+let waMessageLog = [];
+function pushWaLog(entry) {
+  waMessageLog.push(entry);
+  if (waMessageLog.length > 200) waMessageLog = waMessageLog.slice(-200);
+  broadcast("whatsapp_message", entry);
+}
+function findActiveOrderByPhone(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  const suffix = digits.slice(-8);
+  const matches = db.orders.filter((o) => o.customerPhone && String(o.customerPhone).replace(/\D/g, "").slice(-8) === suffix && ["solicitacao", "producao", "pronto"].indexOf(o.status) !== -1);
+  matches.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return matches[0] || null;
+}
+const whatsapp = createWhatsApp({
+  dataDir: DATA_DIR,
+  onStatusChange: (status) => broadcast("whatsapp_status", status),
+  onMessage: (entry) => pushWaLog(entry),
+  getBotEnabled: () => !!db.config.whatsappBotEnabled,
+  getBotContext: () => ({
+    menuUrl: process.env.PUBLIC_URL || "",
+    findActiveOrderByPhone: findActiveOrderByPhone
+  })
+});
 
 // ---------- helpers ----------
 function uid() { return crypto.randomBytes(8).toString("hex"); }
@@ -332,6 +359,18 @@ app.get("/api/events", (req, res) => {
   req.on("close", () => { clearInterval(ping); sseClients.delete(res); });
 });
 
+// ---------- WhatsApp (admin) ----------
+app.get("/api/whatsapp/status", requireAuth, requireAdmin, (req, res) => res.json(whatsapp.getStatus()));
+app.post("/api/whatsapp/logout", requireAuth, requireAdmin, async (req, res) => { await whatsapp.logout(); res.json({ ok: true }); });
+app.get("/api/whatsapp/messages", requireAuth, requireAdmin, (req, res) => res.json({ messages: waMessageLog }));
+app.post("/api/whatsapp/send", requireAuth, requireAdmin, async (req, res) => {
+  const { phone, text } = req.body || {};
+  if (!phone || !text) return res.status(400).json({ error: "telefone e mensagem são obrigatórios" });
+  const ok = await whatsapp.sendMessage(phone, text);
+  if (!ok) return res.status(503).json({ error: "WhatsApp não está conectado no momento" });
+  res.json({ ok: true });
+});
+
 // ---------- público (sem login) ----------
 app.get("/api/public/menu", (req, res) => res.json({ menu: publicMenuList() }));
 app.get("/api/public/config", (req, res) => res.json({ config: publicConfig() }));
@@ -367,7 +406,7 @@ app.post("/api/public/orders", (req, res) => {
     customerName: String(customerName).slice(0, 120), customerPhone: String(customerPhone).slice(0, 40),
     delivery: deliveryInfo, total,
     payment: { method, status: method === "pix_online" ? "aguardando" : "nao_aplica" },
-    status: "solicitacao", createdAt: new Date().toISOString(), acceptedAt: null, finalizedAt: null, stockReturned: false
+    status: "solicitacao", createdAt: new Date().toISOString(), acceptedAt: null, finalizedAt: null, stockReturned: false, dispatched: false, dispatchedAt: null
   };
   applyStockDelta(resolvedLines, -1);
   db.orders.push(order);
@@ -596,7 +635,7 @@ app.post("/api/orders", requireAuth, (req, res) => {
     id: uid(), number: generateOrderNumber(), source: "balcao", lines: resolvedLines, type,
     customerName: (customerName || "").slice(0, 120), customerPhone: (customerPhone || "").slice(0, 40), delivery: deliveryInfo, total,
     payment: { method: "balcao", status: "nao_aplica" }, status: "producao",
-    createdAt: new Date().toISOString(), acceptedAt: null, finalizedAt: null, stockReturned: false
+    createdAt: new Date().toISOString(), acceptedAt: null, finalizedAt: null, stockReturned: false, dispatched: false, dispatchedAt: null
   };
   applyStockDelta(resolvedLines, -1);
   db.orders.push(order);
@@ -623,7 +662,7 @@ app.put("/api/orders/:id", requireAuth, (req, res) => {
   broadcast("orders_changed", { reason: "pedido_editado" });
   res.json({ order });
 });
-app.patch("/api/orders/:id/status", requireAuth, (req, res) => {
+app.patch("/api/orders/:id/status", requireAuth, async (req, res) => {
   const order = db.orders.find((o) => o.id === req.params.id);
   if (!order) return res.status(404).json({ error: "pedido não encontrado" });
   const { status } = req.body || {};
@@ -635,6 +674,20 @@ app.patch("/api/orders/:id/status", requireAuth, (req, res) => {
   if (status === "finalizado") order.finalizedAt = new Date().toISOString();
   persist();
   broadcast("orders_changed", { reason: "status_alterado" });
+  if (order.customerPhone && ["producao", "pronto", "finalizado"].indexOf(status) !== -1) {
+    whatsapp.sendMessage(order.customerPhone, whatsapp.orderStatusText(order)).catch(() => {});
+  }
+  res.json({ order });
+});
+app.patch("/api/orders/:id/dispatch", requireAuth, (req, res) => {
+  const order = db.orders.find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: "pedido não encontrado" });
+  if (order.type !== "delivery") return res.status(400).json({ error: "só pedidos de delivery podem ser marcados como saiu para entrega" });
+  order.dispatched = true;
+  order.dispatchedAt = new Date().toISOString();
+  persist();
+  broadcast("orders_changed", { reason: "saiu_para_entrega" });
+  if (order.customerPhone) whatsapp.sendMessage(order.customerPhone, whatsapp.orderStatusText(order)).catch(() => {});
   res.json({ order });
 });
 app.patch("/api/orders/:id/payment", requireAuth, (req, res) => {
@@ -715,6 +768,7 @@ app.put("/api/config", requireAuth, requireAdmin, (req, res) => {
     db.config.businessHours = bh;
   }
   if (b.emergencyClosed !== undefined) db.config.emergencyClosed = !!b.emergencyClosed;
+  if (b.whatsappBotEnabled !== undefined) db.config.whatsappBotEnabled = !!b.whatsappBotEnabled;
   if (b.staffSlug !== undefined && String(b.staffSlug).trim()) db.config.staffSlug = String(b.staffSlug).trim().replace(/[^a-zA-Z0-9-_]/g, "").slice(0, 60);
   persist();
   broadcast("config_changed", {});

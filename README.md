@@ -1,5 +1,39 @@
 # Brothers — sistema completo (nuvem + desktop)
 
+## Novidades da v5 — WhatsApp automático (experimental)
+
+Nova aba **WhatsApp** (só admin), usando a biblioteca Baileys (WhatsApp Web não-oficial):
+
+- **Como ligar**: entre na aba WhatsApp, escaneie o QR Code com o celular do restaurante
+  (WhatsApp → Aparelhos conectados → Conectar aparelho). Assim que conectar, o sistema
+  passa a enviar automaticamente uma mensagem pro cliente sempre que o pedido muda de
+  status (aceito, pronto, saiu para entrega, finalizado) — sem precisar clicar em nada.
+- **Botão "Saiu para entrega"**: aparece nos pedidos de delivery que estão prontos.
+- **Bot de respostas automáticas**: quando o cliente manda mensagem, o sistema responde
+  sozinho um menu simples (ver cardápio / status do pedido / falar com atendente) e, se
+  ele perguntar sobre o pedido, busca automaticamente pelo número de telefone e responde
+  o status atual. Dá pra desligar esse bot a qualquer momento (deixa só o botão de
+  aviso automático de status funcionando) no toggle da própria aba.
+- **Conversa e envio manual**: a aba mostra as últimas mensagens indo e vindo, e tem um
+  campo pra você mandar uma mensagem manual pra qualquer número, sem precisar abrir o
+  WhatsApp de verdade.
+
+**Avisos importantes, sério mesmo:**
+
+1. **Isso não é a API oficial do WhatsApp** — é engenharia reversa do WhatsApp Web. O
+   WhatsApp pode banir o número se detectar muita automação ou se clientes denunciarem
+   como spam. **Teste com um número secundário/chip reserva antes de usar o número
+   principal do restaurante.**
+2. **O plano do Render precisa ficar sempre ativo.** O plano free hiberna depois de um
+   tempo sem uso, e isso derruba a conexão do WhatsApp toda hora (ela reconecta sozinha,
+   mas fica instável). Use pelo menos o plano pago mais básico.
+3. **A sessão (QR escaneado) precisa do mesmo disco persistente** que já era recomendado
+   pro `data.json` — sem isso, todo redeploy pede escanear o QR de novo. Configure
+   `DATA_DIR=/data` com um volume persistente montado ali (Railway, Fly.io, ou Render com
+   disco pago), do jeito que já está explicado mais abaixo neste README.
+4. Se o número ficar muito tempo sem escanear de novo depois de desconectado, o WhatsApp
+   pode pedir verificação extra — normal, é só escanear de novo.
+
 ## Novidades da v3
 
 - **Link da equipe fixo**: pra ele parar de mudar toda vez que o Render reinicia (disco
