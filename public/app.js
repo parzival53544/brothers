@@ -724,7 +724,6 @@
       if (l.addons && l.addons.length) {
         block += l.addons.map(function (a) { return '<div class="pline addon-line"><span>&nbsp;&nbsp;+ ' + escapeHtml(a.name) + '</span><span>' + fmtMoney(a.price * l.qty) + '</span></div>'; }).join("");
       }
-      block += '<div class="pline sub"><span>&nbsp;&nbsp;subtotal</span><span>' + fmtMoney(l.price * l.qty) + '</span></div>';
       return block;
     }).join("");
     document.getElementById("pr-lines").innerHTML = linesHtml;

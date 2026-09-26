@@ -527,10 +527,10 @@ app.post("/api/addon-groups/import", requireAuth, (req, res) => {
 // ---------- backup completo (cardápio + complementos + imagens) ----------
 app.get("/api/menu/backup", requireAuth, (req, res) => {
   const backup = {
-    type: "brothers-backup", version: 1, exportedAt: new Date().toISOString(),
+    type: "brothers-backup", version: 2, exportedAt: new Date().toISOString(),
     menu: db.menu, addonGroups: db.config.addonGroups, categoryOrder: db.config.categoryOrder,
     disabledCategories: db.config.disabledCategories, imageLibrary: db.config.imageLibrary,
-    logoImage: db.config.logoImage, coverImage: db.config.coverImage
+    logoImage: db.config.logoImage, coverImage: db.config.coverImage, deliveryZones: db.config.deliveryZones
   };
   res.set({ "Content-Type": "application/json; charset=utf-8", "Content-Disposition": 'attachment; filename="backup-brothers-' + todayStr() + '.json"' });
   res.send(JSON.stringify(backup, null, 2));
@@ -543,6 +543,7 @@ app.post("/api/menu/backup/restore", requireAuth, requireAdmin, (req, res) => {
   if (Array.isArray(b.categoryOrder)) db.config.categoryOrder = b.categoryOrder;
   if (Array.isArray(b.disabledCategories)) db.config.disabledCategories = b.disabledCategories;
   if (Array.isArray(b.imageLibrary)) db.config.imageLibrary = b.imageLibrary;
+  if (Array.isArray(b.deliveryZones)) db.config.deliveryZones = b.deliveryZones;
   if (typeof b.logoImage === "string") db.config.logoImage = b.logoImage;
   if (typeof b.coverImage === "string") db.config.coverImage = b.coverImage;
   persist();
