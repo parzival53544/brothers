@@ -297,9 +297,9 @@
       if (me.role !== "admin") return;
       try { renderWaStatus(JSON.parse(e.data)); } catch (err) {}
     });
-    evtSource.addEventListener("whatsapp_message", function () {
+    evtSource.addEventListener("whatsapp_message", async function () {
       var active = document.querySelector("#staff-screen .view.active");
-      if (active && active.id === "view-whatsapp") refreshWaMessages();
+      if (active && active.id === "view-whatsapp") { await refreshWaMessages(); renderWaContactList(); renderWaThread(); }
     });
     evtSource.onerror = function () {};
   }
@@ -417,6 +417,7 @@
   var pubCart = { lines: [] };
   var pubCheckout = { type: "local", pay: "dinheiro" };
 
+  var WEEKDAY_LABELS_PT = { sun: "domingo", mon: "segunda-feira", tue: "terça-feira", wed: "quarta-feira", thu: "quinta-feira", fri: "sexta-feira", sat: "sábado" };
   async function loadPublicMenuAndConfig() {
     try {
       var c = await api("/api/public/config"); publicConfigCache = c.config;
@@ -425,6 +426,16 @@
     applyAccentColor(publicConfigCache.accentColor);
     document.getElementById("pub-cover").style.cssText = bgImgStyle(publicConfigCache.coverImage);
     document.getElementById("pub-avatar").style.cssText = bgImgStyle(publicConfigCache.logoImage);
+    document.getElementById("pub-title").textContent = publicConfigCache.restaurantName || "Restaurante";
+    document.title = publicConfigCache.restaurantName || "Restaurante";
+    var descEl = document.getElementById("pub-description");
+    if (publicConfigCache.restaurantDescription) { descEl.textContent = publicConfigCache.restaurantDescription; descEl.style.display = "block"; }
+    else descEl.style.display = "none";
+    var badge = document.getElementById("pub-open-badge");
+    badge.className = "open-badge " + (publicConfigCache.status.open ? "open" : "closed");
+    badge.textContent = publicConfigCache.status.open ? "🟢 Aberto agora" : "🔴 Fechado no momento";
+    var th = publicConfigCache.todayHours;
+    document.getElementById("pub-today-hours").textContent = th ? (th.closed ? "Não abrimos hoje (" + WEEKDAY_LABELS_PT[th.day] + ")" : "Hoje: " + th.open + " às " + th.close) : "";
     var banner = document.getElementById("closed-banner");
     if (!publicConfigCache.status.open) {
       banner.style.display = "block";
@@ -595,8 +606,12 @@
       '<div class="actions">' +
       (o.payment.method === "pix_online" && o.payment.status !== "confirmado" ? '<button class="btn btn-ghost btn-small confirm-pix">Confirmar pagamento Pix</button>' : '') +
       '<button class="btn btn-primary btn-small accept" ' + (canAccept ? '' : 'disabled style="opacity:.5;cursor:not-allowed;"') + '>Aceitar pedido</button>' +
-      '<button class="btn btn-ghost btn-small notify-accept">Avisar cliente</button>' +
+      '<button class="btn btn-ghost btn-small resend">🔁 Reenviar mensagem</button>' +
       '<button class="btn btn-danger btn-small refuse">Recusar</button></div></div>';
+  }
+  async function resendOrderMessage(id) {
+    try { await api("/api/orders/" + id + "/resend-message", { method: "POST" }); showToast("Mensagem reenviada com sucesso."); }
+    catch (e) { showToast(e.message); }
   }
   function wireSolicCards() {
     document.querySelectorAll("#col-solic .order-card").forEach(function (card) {
@@ -608,9 +623,7 @@
         if (acc.disabled) return;
         try { var r2 = await api("/api/orders/" + id + "/status", { method: "PATCH", body: { status: "producao" } }); showToast("Pedido #" + String(r2.order.number).padStart(3, "0") + " aceito."); renderPedidosBoard(); } catch (e) { showToast(e.message); }
       });
-      card.querySelector(".notify-accept").addEventListener("click", function () {
-        openWhatsAppRaw(card.dataset.phone, "Oi! Seu pedido #" + String(card.dataset.number).padStart(3, "0") + " na Brothers foi confirmado e já vai para a produção. Obrigado!");
-      });
+      card.querySelector(".resend").addEventListener("click", function () { resendOrderMessage(id); });
       card.querySelector(".refuse").addEventListener("click", async function () {
         if (!confirm("Recusar este pedido?")) return;
         try { await api("/api/orders/" + id + "/status", { method: "PATCH", body: { status: "recusado" } }); renderPedidosBoard(); } catch (e) { showToast(e.message); }
@@ -631,7 +644,7 @@
       '<div class="actions"><button class="btn btn-primary btn-small adv">' + advLabel + '</button>' +
       (showDispatch ? '<button class="btn btn-ghost btn-small dispatch">🛵 Saiu para entrega</button>' : '') +
       '<button class="btn btn-ghost btn-small edt">Editar</button><button class="btn btn-ghost btn-small prt">Imprimir</button>' +
-      (hasPhone ? '<button class="btn btn-ghost btn-small notify">Avisar cliente</button>' : '') +
+      (hasPhone ? '<button class="btn btn-ghost btn-small resend">🔁 Reenviar mensagem</button>' : '') +
       '<button class="btn btn-danger btn-small del">Cancelar</button></div></div>';
   }
   function wireOrderCards(allOrders) {
@@ -643,11 +656,7 @@
       });
       var editBtn = card.querySelector(".edt"); if (editBtn) editBtn.addEventListener("click", function () { loadOrderForEdit(id); });
       var printBtn = card.querySelector(".prt"); if (printBtn) printBtn.addEventListener("click", function () { var o = allOrders.find(function (x) { return x.id === id; }); if (o) printReceipt(o); });
-      var notifyBtn = card.querySelector(".notify"); if (notifyBtn) notifyBtn.addEventListener("click", function () {
-        var o = allOrders.find(function (x) { return x.id === id; });
-        var txt = o.status === "producao" ? "Seu pedido #" + String(o.number).padStart(3, "0") + " está em produção!" : "Seu pedido #" + String(o.number).padStart(3, "0") + " está pronto!";
-        openWhatsAppRaw(digitsOnly(o.customerPhone), txt);
-      });
+      var resendBtn = card.querySelector(".resend"); if (resendBtn) resendBtn.addEventListener("click", function () { resendOrderMessage(id); });
       var delBtn = card.querySelector(".del"); if (delBtn) delBtn.addEventListener("click", async function () {
         if (!confirm("Cancelar este pedido?")) return;
         try { await api("/api/orders/" + id, { method: "DELETE" }); renderPedidosBoard(); } catch (e) { showToast(e.message); }
@@ -659,15 +668,21 @@
     try { await api("/api/orders/" + id + "/status", { method: "PATCH", body: { status: next } }); renderPedidosBoard(); } catch (e) { showToast(e.message); }
   }
 
-  // ===================== WHATSAPP (Baileys) =====================
+  // ===================== WHATSAPP (Baileys) — conversas + transmissão =====================
+  var waMessagesCache = [];
+  var waContactsCache = [];
+  var waSelectedPhone = null;
+
   async function loadWhatsAppView() {
     await refreshWaStatus();
-    await refreshWaMessages();
     document.getElementById("wa-bot-toggle").checked = !!(staffConfigCache && staffConfigCache.whatsappBotEnabled);
+    await Promise.all([refreshWaMessages(), refreshWaContacts()]);
+    renderWaContactList();
+    renderWaThread();
   }
   function renderWaStatus(data) {
     var box = document.getElementById("wa-status-box");
-    var labels = { conectado: "🟢 Conectado", aguardando_qr: "🟡 Aguardando leitura do QR Code", desconectado: "🔴 Desconectado" };
+    var labels = { conectado: "🟢 Conectado", aguardando_qr: "🟡 Aguardando leitura do QR Code", desconectado: "🔴 Desconectado — escaneie o QR Code abaixo" };
     box.innerHTML = '<span class="wa-status-pill ' + data.status + '">' + (labels[data.status] || data.status) + '</span>';
     document.getElementById("wa-qr-box").style.display = data.status === "aguardando_qr" && data.qr ? "block" : "none";
     if (data.qr) document.getElementById("wa-qr-img").src = data.qr;
@@ -676,17 +691,46 @@
     try { var r = await api("/api/whatsapp/status"); renderWaStatus(r); } catch (e) {}
   }
   async function refreshWaMessages() {
-    try {
-      var r = await api("/api/whatsapp/messages");
-      renderWaMessages(r.messages);
-    } catch (e) {}
+    try { var r = await api("/api/whatsapp/messages"); waMessagesCache = r.messages; } catch (e) {}
   }
-  function renderWaMessages(messages) {
-    var wrap = document.getElementById("wa-messages");
-    if (!messages.length) { wrap.innerHTML = '<div class="empty-hint">Nenhuma mensagem ainda.</div>'; return; }
-    wrap.innerHTML = messages.map(function (m) {
-      return '<div class="wa-msg ' + m.direction + '">' + escapeHtml(m.text) + '<div class="meta">' + (m.direction === "in" ? m.phone : "você") + ' · ' + fmtDateTime(m.at) + '</div></div>';
+  async function refreshWaContacts() {
+    try { var r = await api("/api/whatsapp/contacts"); waContactsCache = r.contacts; } catch (e) {}
+  }
+  function contactName(phone) {
+    var c = waContactsCache.find(function (x) { return x.phone === phone; });
+    return (c && c.name) || phone;
+  }
+  function renderWaContactList() {
+    var threads = {};
+    waMessagesCache.forEach(function (m) {
+      if (!threads[m.phone]) threads[m.phone] = [];
+      threads[m.phone].push(m);
+    });
+    var phones = Object.keys(threads).sort(function (a, b) { return new Date(threads[b][threads[b].length - 1].at) - new Date(threads[a][threads[a].length - 1].at); });
+    var wrap = document.getElementById("wa-contact-list");
+    if (!phones.length) { wrap.innerHTML = '<div class="empty-hint">Nenhuma conversa ainda.</div>'; return; }
+    wrap.innerHTML = phones.map(function (phone) {
+      var last = threads[phone][threads[phone].length - 1];
+      var optedOut = waContactsCache.some(function (c) { return c.phone === phone && c.optedOut; });
+      return '<div class="wa-contact-row' + (phone === waSelectedPhone ? ' active' : '') + '" data-phone="' + phone + '">' +
+        '<div class="nm">' + escapeHtml(contactName(phone)) + (optedOut ? ' <span class="optout-flag">saiu</span>' : '') + '</div>' +
+        '<div class="prev">' + (last.direction === "out" ? "você: " : "") + escapeHtml(last.text.slice(0, 40)) + '</div></div>';
     }).join("");
+    wrap.querySelectorAll(".wa-contact-row").forEach(function (row) {
+      row.addEventListener("click", function () { waSelectedPhone = row.dataset.phone; renderWaContactList(); renderWaThread(); });
+    });
+  }
+  function renderWaThread() {
+    var header = document.getElementById("wa-thread-header");
+    var wrap = document.getElementById("wa-thread-messages");
+    if (!waSelectedPhone) { header.textContent = "Selecione uma conversa"; wrap.innerHTML = ""; return; }
+    header.textContent = contactName(waSelectedPhone) + " · " + waSelectedPhone;
+    var msgs = waMessagesCache.filter(function (m) { return m.phone === waSelectedPhone; });
+    wrap.innerHTML = msgs.length ? msgs.map(function (m) {
+      return '<div class="wa-msg ' + m.direction + (m.status === "erro" ? ' erro' : '') + '">' + escapeHtml(m.text) +
+        (m.status === "erro" ? '<div class="err-text">⚠ ' + escapeHtml(m.error || "falha ao enviar") + '</div>' : '') +
+        '<div class="meta">' + fmtDateTime(m.at) + '</div></div>';
+    }).join("") : '<div class="empty-hint">Sem mensagens com esse contato ainda.</div>';
     wrap.scrollTop = wrap.scrollHeight;
   }
   document.getElementById("btn-wa-logout").addEventListener("click", async function () {
@@ -696,14 +740,39 @@
   document.getElementById("wa-bot-toggle").addEventListener("change", async function () {
     try { await api("/api/config", { method: "PUT", body: { whatsappBotEnabled: this.checked } }); staffConfigCache.whatsappBotEnabled = this.checked; showToast(this.checked ? "Bot ativado." : "Bot desativado."); } catch (e) { showToast(e.message); }
   });
-  document.getElementById("btn-wa-send").addEventListener("click", async function () {
-    var phone = document.getElementById("wa-send-phone").value.trim();
-    var text = document.getElementById("wa-send-text").value.trim();
-    if (!phone || !text) { showToast("Preencha número e mensagem."); return; }
+  document.getElementById("btn-wa-reply").addEventListener("click", async function () {
+    if (!waSelectedPhone) { showToast("Selecione uma conversa primeiro."); return; }
+    var text = document.getElementById("wa-reply-text").value.trim();
+    if (!text) return;
+    document.getElementById("wa-reply-text").value = "";
+    try { await api("/api/whatsapp/send", { method: "POST", body: { phone: waSelectedPhone, text: text } }); await refreshWaMessages(); renderWaContactList(); renderWaThread(); }
+    catch (e) { showToast(e.message); }
+  });
+  document.getElementById("wa-reply-text").addEventListener("keydown", function (e) { if (e.key === "Enter") document.getElementById("btn-wa-reply").click(); });
+
+  // ---- transmissão ----
+  document.getElementById("btn-open-broadcast").addEventListener("click", async function () {
+    await refreshWaContacts();
+    var wrap = document.getElementById("bc-contact-list");
+    wrap.innerHTML = waContactsCache.length ? waContactsCache.map(function (c) {
+      return '<label class="group-check-row"><input type="checkbox" class="bc-check" value="' + c.phone + '" ' + (c.optedOut ? "disabled" : "") + '> ' +
+        escapeHtml(c.name || c.phone) + ' (' + c.phone + ')' + (c.optedOut ? ' <span class="optout-flag">saiu da lista</span>' : '') + '</label>';
+    }).join("") : '<div class="empty-hint">Nenhum contato ainda — aparecem aqui assim que os primeiros pedidos chegarem.</div>';
+    document.getElementById("bc-text").value = "";
+    document.getElementById("broadcast-modal").classList.add("show");
+  });
+  document.getElementById("broadcast-close").addEventListener("click", function () { document.getElementById("broadcast-modal").classList.remove("show"); });
+  document.getElementById("bc-select-all").addEventListener("click", function () { document.querySelectorAll(".bc-check:not(:disabled)").forEach(function (c) { c.checked = true; }); });
+  document.getElementById("bc-select-none").addEventListener("click", function () { document.querySelectorAll(".bc-check").forEach(function (c) { c.checked = false; }); });
+  document.getElementById("bc-send").addEventListener("click", async function () {
+    var phones = Array.from(document.querySelectorAll(".bc-check:checked")).map(function (c) { return c.value; });
+    var text = document.getElementById("bc-text").value.trim();
+    if (!phones.length || !text) { showToast("Selecione ao menos um contato e escreva a mensagem."); return; }
+    if (phones.length > 20 && !confirm("Enviar para " + phones.length + " contatos? O envio é gradual e pode levar alguns minutos.")) return;
     try {
-      await api("/api/whatsapp/send", { method: "POST", body: { phone: phone, text: text } });
-      document.getElementById("wa-send-text").value = "";
-      refreshWaMessages();
+      var r = await api("/api/whatsapp/broadcast", { method: "POST", body: { phones: phones, text: text } });
+      showToast("Transmissão iniciada para " + r.queued + " contato(s). Acompanhe em Conversas.");
+      document.getElementById("broadcast-modal").classList.remove("show");
     } catch (e) { showToast(e.message); }
   });
 
@@ -1162,6 +1231,8 @@
   async function loadConfigForm() {
     var r; try { r = await api("/api/config"); } catch (e) { return; }
     staffConfigCache = r.config;
+    document.getElementById("cfg-restaurant-name").value = r.config.restaurantName || "";
+    document.getElementById("cfg-restaurant-desc").value = r.config.restaurantDescription || "";
     document.getElementById("cfg-whatsapp").value = r.config.whatsapp || "";
     document.getElementById("cfg-pix-name").value = r.config.pixName || "";
     document.getElementById("cfg-pix-key").value = r.config.pixKey || "";
@@ -1296,6 +1367,8 @@
   document.getElementById("btn-save-config").addEventListener("click", async function () {
     try {
       var body = {
+        restaurantName: document.getElementById("cfg-restaurant-name").value.trim(),
+        restaurantDescription: document.getElementById("cfg-restaurant-desc").value.trim(),
         whatsapp: document.getElementById("cfg-whatsapp").value,
         pixName: document.getElementById("cfg-pix-name").value.trim(),
         pixKey: document.getElementById("cfg-pix-key").value.trim(),

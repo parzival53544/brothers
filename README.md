@@ -1,5 +1,53 @@
 # Brothers — sistema completo (nuvem + desktop)
 
+## Novidades da v6 — mensagens automáticas de verdade + conversas
+
+**Por que as mensagens não estavam saindo:** a v5 só mandava mensagem quando o pedido
+mudava de status — não quando o cliente fazia o pedido. Isso já está corrigido: agora
+manda automaticamente em cada etapa:
+
+1. **Pedido feito** → mensagem de confirmação com o resumo completo (itens, complementos,
+   taxa de entrega se tiver, total).
+2. **Aceito (foi pra produção)** → "está em preparo".
+3. **Pronto** → mensagem diferente pra cada tipo: local, retirada ("pode vir buscar") ou
+   delivery ("vai sair pra entrega").
+4. **Saiu para entrega** (botão 🛵 nos pedidos de delivery prontos) → avisa que saiu.
+5. **Finalizado** → agradecimento.
+
+O código Pix copia-e-cola automático (quando o cliente escolhe "Pix agora") fica pra uma
+próxima etapa, como você combinou.
+
+**Se mesmo assim não sair**: toda tentativa de envio agora fica registrada na aba
+WhatsApp → Conversas, com "✅ enviado" ou "⚠️ erro" — e o erro mais comum é justamente
+"WhatsApp não está conectado", ou seja, a sessão caiu (geralmente por causa do disco não
+persistente no Render, como já expliquei antes) e precisa escanear o QR de novo.
+
+**Botões "Avisar cliente" removidos** — não fazem mais sentido já que tudo é automático.
+No lugar, tem um botão **🔁 Reenviar mensagem** em cada pedido (solicitação, produção,
+pronto), pra quando o envio automático falhar ou você quiser reforçar.
+
+**Aba WhatsApp virou uma tela de conversas de verdade**: lista de contatos à esquerda
+(criada automaticamente a partir de quem já fez pedido), conversa completa à direita,
+com campo de resposta — bem parecido com o WhatsApp Web mesmo, só que dentro do painel.
+
+**Lista de transmissão** (Configurações → aba WhatsApp → "Nova lista de transmissão"):
+manda uma mensagem pra vários contatos de uma vez (promoção do dia, aviso de reabertura
+etc.). Segui a recomendação de mercado pra reduzir risco de bloqueio: envio sequencial
+com 5-9 segundos de intervalo entre cada mensagem (não é instantâneo pra lista grande,
+de propósito), aviso automático de "responda PARAR pra sair" em toda transmissão, e
+quem responde PARAR/SAIR entra numa lista de descadastro e não recebe mais transmissões
+(mas continua recebendo as mensagens do próprio pedido dele normalmente).
+
+**No link público**: agora dá pra configurar o **nome e uma descrição curta do
+restaurante** direto em Configurações (antes estava fixo como "Brothers" no código). A
+logo ficou maior, e embaixo dela aparece um selo verde "Aberto agora" ou vermelho
+"Fechado no momento", com o horário de hoje logo abaixo.
+
+**Backup agora salva literalmente tudo**: nome e descrição do restaurante, cardápio,
+complementos, fotos, bairros de entrega, horário de funcionamento, fuso horário, cor,
+WhatsApp/Pix — o arquivo antigo (de v2/v3/v4) ainda é aceito pra restaurar, mas os novos
+já saem completos.
+
 ## Novidades da v5 — WhatsApp automático (experimental)
 
 Nova aba **WhatsApp** (só admin), usando a biblioteca Baileys (WhatsApp Web não-oficial):

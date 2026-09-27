@@ -14,7 +14,12 @@
     <div class="avatar" id="pub-avatar"></div>
   </div>
   <main style="max-width:700px; padding-bottom:110px;">
-    <div class="public-header"><h1 id="pub-title">BROTHERS</h1><p>Toque em um item para ver detalhes e adicionar</p></div>
+    <div class="public-header">
+      <h1 id="pub-title">Restaurante</h1>
+      <p id="pub-description" style="display:none;"></p>
+      <div class="open-badge" id="pub-open-badge"></div>
+      <div class="today-hours" id="pub-today-hours"></div>
+    </div>
     <div class="closed-banner" id="closed-banner" style="display:none;"></div>
     <div id="pub-menu-picker"></div>
   </main>
@@ -157,19 +162,36 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top:16px;">
-        <div class="section-title">Mensagens recentes</div>
-        <div class="wa-log" id="wa-messages"></div>
-        <div class="field-row" style="margin-top:12px;">
-          <input type="text" id="wa-send-phone" placeholder="Número (com DDD)" style="max-width:180px;">
-          <input type="text" id="wa-send-text" placeholder="Mensagem">
-          <button class="btn btn-primary btn-small" id="btn-wa-send" style="max-width:100px;">Enviar</button>
+      <div class="card wa-chat-card" style="margin-top:16px;">
+        <div class="section-title">Conversas</div>
+        <div class="wa-chat-layout">
+          <div class="wa-contact-list" id="wa-contact-list"></div>
+          <div class="wa-thread">
+            <div class="wa-thread-header" id="wa-thread-header">Selecione uma conversa</div>
+            <div class="wa-thread-messages" id="wa-thread-messages"></div>
+            <div class="wa-thread-reply">
+              <input type="text" id="wa-reply-text" placeholder="Digite uma mensagem…">
+              <button class="btn btn-primary btn-small" id="btn-wa-reply">Enviar</button>
+            </div>
+          </div>
         </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="section-title">Lista de transmissão</div>
+        <div class="notice">Envie avisos (promoções, "estamos abertos" etc.) pra vários clientes de uma vez. Cada mensagem sai com alguns segundos de intervalo e um aviso de "responda PARAR" — clientes que pedirem pra sair não recebem mais transmissões, mas continuam recebendo as mensagens normais dos próprios pedidos deles.</div>
+        <button class="btn btn-primary btn-small" id="btn-open-broadcast">📣 Nova lista de transmissão</button>
       </div>
     </section>
 
     <section id="view-config" class="view">
       <div class="card">
+        <div class="section-title">Identidade do restaurante</div>
+        <label>Nome do restaurante</label><input type="text" id="cfg-restaurant-name" placeholder="Ex: Brothers">
+        <label>Breve descrição</label><textarea id="cfg-restaurant-desc" rows="2" placeholder="Ex: Hambúrgueres artesanais desde 2020"></textarea>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
         <div class="section-title">Aparência</div>
         <label>Cor de destaque (hex)</label>
         <div class="field-row" style="align-items:center;">
@@ -406,6 +428,23 @@
     </div>
     <button class="btn btn-ghost btn-block" id="crop-auto" style="margin-top:8px;">Usar sem ajustar (corte automático)</button>
     <button class="btn btn-ghost btn-block" id="crop-cancel" style="margin-top:8px;">Cancelar</button>
+  </div>
+</div>
+
+<!-- modal: nova lista de transmissão -->
+<div class="modal-overlay" id="broadcast-modal">
+  <div class="modal-box">
+    <button class="modal-x" id="broadcast-close" type="button">✕</button>
+    <div class="section-title">Nova lista de transmissão</div>
+    <div class="notice">Recomendado: teste com poucos contatos antes de mandar pra lista toda. O envio é sequencial com alguns segundos entre cada mensagem — listas grandes podem levar minutos.</div>
+    <div class="field-row">
+      <button class="btn btn-ghost btn-small" id="bc-select-all" type="button">Selecionar todos</button>
+      <button class="btn btn-ghost btn-small" id="bc-select-none" type="button">Limpar seleção</button>
+    </div>
+    <div class="image-grid" id="bc-contact-list" style="grid-template-columns:1fr; max-height:220px;"></div>
+    <label style="margin-top:12px;">Mensagem</label>
+    <textarea id="bc-text" rows="4" placeholder="Ex: Hoje temos 20% off em combos! Só até às 22h 🍔"></textarea>
+    <button class="btn btn-primary btn-block" id="bc-send" style="margin-top:14px;">Enviar transmissão</button>
   </div>
 </div>
 

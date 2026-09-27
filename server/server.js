@@ -38,6 +38,7 @@ function defaultData() {
       { id: "u2", username: "garcom", passwordHash: bcrypt.hashSync("garcom", 10), role: "garcom", name: "Garçom" }
     ],
     config: {
+      restaurantName: "Brothers", restaurantDescription: "",
       whatsapp: "", pixKey: "", pixName: "", onlinePaymentEnabled: false,
       accentColor: "#B9862F", logoImage: "", coverImage: "",
       categoryOrder: [], disabledCategories: [], deliveryZones: [],
@@ -48,27 +49,32 @@ function defaultData() {
       businessHours: defaultBusinessHours(),
       emergencyClosed: false,
       imageLibrary: [],
-      whatsappBotEnabled: true
-    }
+      whatsappBotEnabled: true,
+      whatsappOptOut: []
+    },
+    whatsappLog: []
   };
 }
 
 // migra bancos antigos que não tinham os campos novos
 function migrate(data) {
   data.config = Object.assign({
+    restaurantName: "Brothers", restaurantDescription: "",
     whatsapp: "", pixKey: "", pixName: "", onlinePaymentEnabled: false,
     accentColor: "#B9862F", logoImage: "", coverImage: "",
     categoryOrder: [], disabledCategories: [], deliveryZones: [],
     addonGroups: [], staffSlug: randomSlug(), notificationSound: "",
     timezone: "America/Manaus", businessHours: defaultBusinessHours(), emergencyClosed: false,
-    imageLibrary: [], whatsappBotEnabled: true
+    imageLibrary: [], whatsappBotEnabled: true, whatsappOptOut: []
   }, data.config || {});
+  if (!Array.isArray(data.whatsappLog)) data.whatsappLog = [];
   if (!data.config.businessHours) data.config.businessHours = defaultBusinessHours();
   if (!data.config.staffSlug) data.config.staffSlug = randomSlug();
   // STAFF_SLUG fixo por variável de ambiente sempre tem prioridade, pra sobreviver a redeploys sem disco persistente
   if (process.env.STAFF_SLUG) data.config.staffSlug = process.env.STAFF_SLUG;
   if (!Array.isArray(data.config.addonGroups)) data.config.addonGroups = [];
   if (!Array.isArray(data.config.disabledCategories)) data.config.disabledCategories = [];
+  if (!Array.isArray(data.config.whatsappOptOut)) data.config.whatsappOptOut = [];
   if (!Array.isArray(data.config.imageLibrary)) data.config.imageLibrary = [];
 
   data.menu = (data.menu || []).map((m, idx) => {
@@ -128,10 +134,11 @@ function broadcast(type, payload) {
 }
 
 // ---------- WhatsApp (Baileys, não-oficial) ----------
-let waMessageLog = [];
 function pushWaLog(entry) {
-  waMessageLog.push(entry);
-  if (waMessageLog.length > 200) waMessageLog = waMessageLog.slice(-200);
+  entry.id = uid();
+  db.whatsappLog.push(entry);
+  if (db.whatsappLog.length > 500) db.whatsappLog = db.whatsappLog.slice(-500);
+  persist();
   broadcast("whatsapp_message", entry);
 }
 function findActiveOrderByPhone(phone) {
@@ -146,6 +153,10 @@ const whatsapp = createWhatsApp({
   onStatusChange: (status) => broadcast("whatsapp_status", status),
   onMessage: (entry) => pushWaLog(entry),
   getBotEnabled: () => !!db.config.whatsappBotEnabled,
+  onOptOut: (phone) => {
+    const digits = String(phone || "").replace(/\D/g, "");
+    if (db.config.whatsappOptOut.indexOf(digits) === -1) { db.config.whatsappOptOut.push(digits); persist(); broadcast("config_changed", {}); }
+  },
   getBotContext: () => ({
     menuUrl: process.env.PUBLIC_URL || "",
     findActiveOrderByPhone: findActiveOrderByPhone
@@ -154,6 +165,7 @@ const whatsapp = createWhatsApp({
 
 // ---------- helpers ----------
 function uid() { return crypto.randomBytes(8).toString("hex"); }
+function fmtMoneyServer(v) { return "R$ " + (Math.round(v * 100) / 100).toFixed(2).replace(".", ","); }
 function todayStr(d) {
   d = d || new Date();
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
@@ -187,8 +199,19 @@ function openStatus() {
   return { open: true };
 }
 
+function todayHours() {
+  const tz = db.config.timezone || "America/Manaus";
+  try {
+    const n = nowInZone(tz);
+    const cfg = (db.config.businessHours || {})[n.day] || { closed: true, open: "00:00", close: "23:59" };
+    return { day: n.day, closed: !!cfg.closed, open: cfg.open, close: cfg.close };
+  } catch (e) { return null; }
+}
+
 function publicConfig() {
   return {
+    restaurantName: db.config.restaurantName || "Restaurante",
+    restaurantDescription: db.config.restaurantDescription || "",
     whatsapp: db.config.whatsapp || "",
     pixKey: db.config.pixKey || "",
     pixName: db.config.pixName || "",
@@ -198,6 +221,7 @@ function publicConfig() {
     coverImage: db.config.coverImage || "",
     deliveryZones: db.config.deliveryZones || [],
     status: openStatus(),
+    todayHours: todayHours(),
     businessHours: db.config.businessHours,
     timezone: db.config.timezone,
     staffSlug: db.config.staffSlug
@@ -362,13 +386,50 @@ app.get("/api/events", (req, res) => {
 // ---------- WhatsApp (admin) ----------
 app.get("/api/whatsapp/status", requireAuth, requireAdmin, (req, res) => res.json(whatsapp.getStatus()));
 app.post("/api/whatsapp/logout", requireAuth, requireAdmin, async (req, res) => { await whatsapp.logout(); res.json({ ok: true }); });
-app.get("/api/whatsapp/messages", requireAuth, requireAdmin, (req, res) => res.json({ messages: waMessageLog }));
+app.get("/api/whatsapp/messages", requireAuth, requireAdmin, (req, res) => res.json({ messages: db.whatsappLog }));
 app.post("/api/whatsapp/send", requireAuth, requireAdmin, async (req, res) => {
   const { phone, text } = req.body || {};
   if (!phone || !text) return res.status(400).json({ error: "telefone e mensagem são obrigatórios" });
-  const ok = await whatsapp.sendMessage(phone, text);
+  const ok = await whatsapp.sendMessage(phone, text, "manual");
   if (!ok) return res.status(503).json({ error: "WhatsApp não está conectado no momento" });
   res.json({ ok: true });
+});
+app.get("/api/whatsapp/contacts", requireAuth, requireAdmin, (req, res) => {
+  const byPhone = {};
+  db.orders.forEach((o) => {
+    const digits = String(o.customerPhone || "").replace(/\D/g, "");
+    if (!digits) return;
+    if (!byPhone[digits] || new Date(o.createdAt) > new Date(byPhone[digits].lastOrderAt)) {
+      byPhone[digits] = { phone: digits, name: o.customerName || "", lastOrderAt: o.createdAt };
+    }
+  });
+  const list = Object.values(byPhone).map((c) => Object.assign({ optedOut: db.config.whatsappOptOut.indexOf(c.phone) !== -1 }, c));
+  list.sort((a, b) => new Date(b.lastOrderAt) - new Date(a.lastOrderAt));
+  res.json({ contacts: list });
+});
+app.delete("/api/whatsapp/optout/:phone", requireAuth, requireAdmin, (req, res) => {
+  db.config.whatsappOptOut = db.config.whatsappOptOut.filter((p) => p !== req.params.phone);
+  persist();
+  res.json({ ok: true });
+});
+// envio em massa (lista de transmissão) - roda em segundo plano com atraso entre mensagens
+// pra reduzir risco de bloqueio (recomendação de mercado: alguns segundos entre cada envio)
+let broadcastRunning = false;
+app.post("/api/whatsapp/broadcast", requireAuth, requireAdmin, (req, res) => {
+  const { phones, text } = req.body || {};
+  if (!Array.isArray(phones) || !phones.length || !text) return res.status(400).json({ error: "lista de números e mensagem são obrigatórios" });
+  if (broadcastRunning) return res.status(409).json({ error: "já existe uma transmissão em andamento, aguarde terminar" });
+  const targets = phones.map((p) => String(p).replace(/\D/g, "")).filter((p) => p && db.config.whatsappOptOut.indexOf(p) === -1);
+  broadcastRunning = true;
+  (async () => {
+    for (const phone of targets) {
+      await whatsapp.sendMessage(phone, text + "\n\n_Não quer mais receber avisos? Responda PARAR._", "transmissao");
+      await new Promise((r) => setTimeout(r, 5000 + Math.random() * 4000)); // 5-9s entre envios
+    }
+    broadcastRunning = false;
+    broadcast("whatsapp_broadcast_done", { count: targets.length });
+  })().catch(() => { broadcastRunning = false; });
+  res.json({ ok: true, queued: targets.length, skipped: phones.length - targets.length });
 });
 
 // ---------- público (sem login) ----------
@@ -412,6 +473,7 @@ app.post("/api/public/orders", (req, res) => {
   db.orders.push(order);
   persist();
   broadcast("orders_changed", { reason: "novo_pedido" });
+  whatsapp.sendMessage(order.customerPhone, whatsapp.orderConfirmationText(order, fmtMoneyServer), "confirmacao_pedido").catch(() => {});
   res.status(201).json({ order });
 });
 
@@ -565,12 +627,10 @@ app.post("/api/addon-groups/import", requireAuth, (req, res) => {
 
 // ---------- backup completo (cardápio + complementos + imagens) ----------
 app.get("/api/menu/backup", requireAuth, (req, res) => {
-  const backup = {
-    type: "brothers-backup", version: 2, exportedAt: new Date().toISOString(),
-    menu: db.menu, addonGroups: db.config.addonGroups, categoryOrder: db.config.categoryOrder,
-    disabledCategories: db.config.disabledCategories, imageLibrary: db.config.imageLibrary,
-    logoImage: db.config.logoImage, coverImage: db.config.coverImage, deliveryZones: db.config.deliveryZones
-  };
+  // backup de verdade: tudo que define o restaurante, menos a sessão do WhatsApp e o slug de acesso da equipe
+  const cfgCopy = Object.assign({}, db.config);
+  delete cfgCopy.staffSlug;
+  const backup = { type: "brothers-backup", version: 3, exportedAt: new Date().toISOString(), menu: db.menu, config: cfgCopy };
   res.set({ "Content-Type": "application/json; charset=utf-8", "Content-Disposition": 'attachment; filename="backup-brothers-' + todayStr() + '.json"' });
   res.send(JSON.stringify(backup, null, 2));
 });
@@ -578,13 +638,19 @@ app.post("/api/menu/backup/restore", requireAuth, requireAdmin, (req, res) => {
   const b = req.body || {};
   if (b.type !== "brothers-backup" || !Array.isArray(b.menu)) return res.status(400).json({ error: "arquivo de backup inválido" });
   db.menu = b.menu;
-  if (Array.isArray(b.addonGroups)) db.config.addonGroups = b.addonGroups;
-  if (Array.isArray(b.categoryOrder)) db.config.categoryOrder = b.categoryOrder;
-  if (Array.isArray(b.disabledCategories)) db.config.disabledCategories = b.disabledCategories;
-  if (Array.isArray(b.imageLibrary)) db.config.imageLibrary = b.imageLibrary;
-  if (Array.isArray(b.deliveryZones)) db.config.deliveryZones = b.deliveryZones;
-  if (typeof b.logoImage === "string") db.config.logoImage = b.logoImage;
-  if (typeof b.coverImage === "string") db.config.coverImage = b.coverImage;
+  if (b.config && typeof b.config === "object") {
+    const keepSlug = db.config.staffSlug;
+    db.config = Object.assign({}, db.config, b.config, { staffSlug: keepSlug });
+  } else {
+    // compatibilidade com backups da v2/v3 (campos soltos em vez de "config")
+    if (Array.isArray(b.addonGroups)) db.config.addonGroups = b.addonGroups;
+    if (Array.isArray(b.categoryOrder)) db.config.categoryOrder = b.categoryOrder;
+    if (Array.isArray(b.disabledCategories)) db.config.disabledCategories = b.disabledCategories;
+    if (Array.isArray(b.imageLibrary)) db.config.imageLibrary = b.imageLibrary;
+    if (Array.isArray(b.deliveryZones)) db.config.deliveryZones = b.deliveryZones;
+    if (typeof b.logoImage === "string") db.config.logoImage = b.logoImage;
+    if (typeof b.coverImage === "string") db.config.coverImage = b.coverImage;
+  }
   persist();
   broadcast("menu_changed", {});
   broadcast("config_changed", {});
@@ -675,7 +741,7 @@ app.patch("/api/orders/:id/status", requireAuth, async (req, res) => {
   persist();
   broadcast("orders_changed", { reason: "status_alterado" });
   if (order.customerPhone && ["producao", "pronto", "finalizado"].indexOf(status) !== -1) {
-    whatsapp.sendMessage(order.customerPhone, whatsapp.orderStatusText(order)).catch(() => {});
+    whatsapp.sendMessage(order.customerPhone, whatsapp.orderStatusText(order), "status_" + status).catch(() => {});
   }
   res.json({ order });
 });
@@ -687,8 +753,17 @@ app.patch("/api/orders/:id/dispatch", requireAuth, (req, res) => {
   order.dispatchedAt = new Date().toISOString();
   persist();
   broadcast("orders_changed", { reason: "saiu_para_entrega" });
-  if (order.customerPhone) whatsapp.sendMessage(order.customerPhone, whatsapp.orderStatusText(order)).catch(() => {});
+  if (order.customerPhone) whatsapp.sendMessage(order.customerPhone, whatsapp.orderStatusText(order), "status_dispatch").catch(() => {});
   res.json({ order });
+});
+app.post("/api/orders/:id/resend-message", requireAuth, async (req, res) => {
+  const order = db.orders.find((o) => o.id === req.params.id);
+  if (!order) return res.status(404).json({ error: "pedido não encontrado" });
+  if (!order.customerPhone) return res.status(400).json({ error: "pedido sem telefone cadastrado" });
+  const text = order.status === "solicitacao" ? whatsapp.orderConfirmationText(order, fmtMoneyServer) : whatsapp.orderStatusText(order);
+  const ok = await whatsapp.sendMessage(order.customerPhone, text, "reenvio");
+  if (!ok) return res.status(503).json({ error: "Não foi possível enviar — confira se o WhatsApp está conectado na aba WhatsApp." });
+  res.json({ ok: true });
 });
 app.patch("/api/orders/:id/payment", requireAuth, (req, res) => {
   const order = db.orders.find((o) => o.id === req.params.id);
@@ -746,6 +821,8 @@ app.get("/api/reports", requireAuth, requireAdmin, (req, res) => {
 app.get("/api/config", requireAuth, (req, res) => res.json({ config: db.config }));
 app.put("/api/config", requireAuth, requireAdmin, (req, res) => {
   const b = req.body || {};
+  if (b.restaurantName !== undefined) db.config.restaurantName = String(b.restaurantName).slice(0, 80) || "Restaurante";
+  if (b.restaurantDescription !== undefined) db.config.restaurantDescription = String(b.restaurantDescription).slice(0, 300);
   if (b.whatsapp !== undefined) db.config.whatsapp = String(b.whatsapp).replace(/\D/g, "");
   if (b.pixKey !== undefined) db.config.pixKey = String(b.pixKey);
   if (b.pixName !== undefined) db.config.pixName = String(b.pixName);
