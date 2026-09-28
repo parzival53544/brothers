@@ -1,5 +1,36 @@
 # Brothers — sistema completo (nuvem + desktop)
 
+## Novidades da v7 — correção de mensagens "enviadas" que não chegavam
+
+**O que descobri:** existe um bug conhecido e ainda sem correção definitiva na própria
+biblioteca do WhatsApp que usamos (Baileys): às vezes ela diz que enviou a mensagem
+(sem dar erro nenhum) mas o WhatsApp nunca entrega — a mensagem fica só com um tique
+cinza. Tem dezenas de relatos abertos no GitHub deles, em várias versões (inclusive a
+mais nova, que é a que usamos). Não é um problema só do seu sistema.
+
+**O que fiz pra reduzir o problema e, principalmente, parar de te enganar:**
+
+1. **Confirmação de entrega de verdade**: antes o painel marcava "enviado" assim que a
+   biblioteca não dava erro. Agora cada mensagem passa por 3 estados honestos:
+   "☑️ enviado, aguardando confirmação" → "✅ entregue" (quando o WhatsApp confirma
+   mesmo) ou "⚠️ sem confirmação de entrega" (se em 20s o WhatsApp não confirmar).
+2. **Validação do número antes de enviar**: o sistema pergunta pro WhatsApp se aquele
+   número realmente existe, e tenta também a variação com/sem o 9º dígito (erro
+   comum no Brasil). Se não existir, mostra "número não encontrado no WhatsApp" em vez
+   de fingir que enviou.
+3. **Reinício preventivo da conexão a cada 6h** (sem precisar escanear o QR de novo),
+   que é o paliativo que a comunidade relata funcionar melhor pra esse bug.
+4. **Respostas do bot e conversas com contatos "@lid"**: versões novas do WhatsApp às
+   vezes identificam o contato por um código interno em vez do número — antes o sistema
+   ignorava essas mensagens; agora trata direito.
+
+**Sendo bem direto:** isso melhora bastante a transparência e reduz o problema, mas não
+elimina — o bug é da biblioteca não-oficial. Se o restaurante depender 100% dessas
+mensagens chegarem, o caminho definitivo é a **API oficial do WhatsApp Business (Meta
+Cloud API)**, que confirma entrega de forma garantida. Posso migrar o sistema pra ela
+quando você quiser — precisa de CNPJ/verificação de negócio na Meta e tem custo por
+conversa, mas é a única solução realmente confiável.
+
 ## Novidades da v6 — mensagens automáticas de verdade + conversas
 
 **Por que as mensagens não estavam saindo:** a v5 só mandava mensagem quando o pedido

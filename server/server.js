@@ -140,6 +140,14 @@ function pushWaLog(entry) {
   if (db.whatsappLog.length > 500) db.whatsappLog = db.whatsappLog.slice(-500);
   persist();
   broadcast("whatsapp_message", entry);
+  return entry;
+}
+function updateWaLog(id, patch) {
+  const entry = db.whatsappLog.find((e) => e.id === id);
+  if (!entry) return;
+  Object.assign(entry, patch);
+  persist();
+  broadcast("whatsapp_message", entry);
 }
 function findActiveOrderByPhone(phone) {
   const digits = String(phone || "").replace(/\D/g, "");
@@ -152,6 +160,7 @@ const whatsapp = createWhatsApp({
   dataDir: DATA_DIR,
   onStatusChange: (status) => broadcast("whatsapp_status", status),
   onMessage: (entry) => pushWaLog(entry),
+  onMessageUpdate: (id, patch) => updateWaLog(id, patch),
   getBotEnabled: () => !!db.config.whatsappBotEnabled,
   onOptOut: (phone) => {
     const digits = String(phone || "").replace(/\D/g, "");

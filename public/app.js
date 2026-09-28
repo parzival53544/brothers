@@ -720,6 +720,7 @@
       row.addEventListener("click", function () { waSelectedPhone = row.dataset.phone; renderWaContactList(); renderWaThread(); });
     });
   }
+  var WA_STATUS_LABEL = { enviado: "☑️ enviado, aguardando confirmação", entregue: "✅ entregue", sem_confirmacao: "⚠️ sem confirmação de entrega", erro: "⚠️ erro" };
   function renderWaThread() {
     var header = document.getElementById("wa-thread-header");
     var wrap = document.getElementById("wa-thread-messages");
@@ -727,9 +728,11 @@
     header.textContent = contactName(waSelectedPhone) + " · " + waSelectedPhone;
     var msgs = waMessagesCache.filter(function (m) { return m.phone === waSelectedPhone; });
     wrap.innerHTML = msgs.length ? msgs.map(function (m) {
-      return '<div class="wa-msg ' + m.direction + (m.status === "erro" ? ' erro' : '') + '">' + escapeHtml(m.text) +
-        (m.status === "erro" ? '<div class="err-text">⚠ ' + escapeHtml(m.error || "falha ao enviar") + '</div>' : '') +
-        '<div class="meta">' + fmtDateTime(m.at) + '</div></div>';
+      var warn = m.status === "erro" || m.status === "sem_confirmacao";
+      var footer = m.direction === "out" && m.status ? (WA_STATUS_LABEL[m.status] || "") : "";
+      return '<div class="wa-msg ' + m.direction + (warn ? ' erro' : '') + '">' + escapeHtml(m.text) +
+        (warn ? '<div class="err-text">⚠ ' + escapeHtml(m.error || "falha ao enviar") + '</div>' : '') +
+        '<div class="meta">' + fmtDateTime(m.at) + (footer ? ' · ' + footer : '') + '</div></div>';
     }).join("") : '<div class="empty-hint">Sem mensagens com esse contato ainda.</div>';
     wrap.scrollTop = wrap.scrollHeight;
   }
