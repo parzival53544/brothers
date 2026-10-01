@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const createWhatsApp = require("./whatsapp");
+const { normalizePhoneBR, isValidBRPhone, formatPhoneBR, titleCaseName, firstName } = require("./phone");
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "brothers-dev-secret-troque-isso";
@@ -52,8 +53,24 @@ function defaultData() {
       whatsappBotEnabled: true,
       whatsappOptOut: []
     },
-    whatsappLog: []
+    whatsappLog: [],
+    customers: {},
+    broadcastTemplates: [],
+    humanRequests: {},
+    baseUrl: ""
   };
+}
+
+// cria/atualiza o cadastro do cliente a partir de um pedido
+function upsertCustomer(dbRef, order) {
+  const phone = order.customerPhone;
+  if (!phone) return;
+  let c = dbRef.customers[phone];
+  if (!c) c = dbRef.customers[phone] = { phone: phone, name: "", address: null, ordersCount: 0, totalSpent: 0, firstOrderAt: order.createdAt, lastOrderAt: order.createdAt };
+  if (order.customerName) c.name = order.customerName;
+  if (order.delivery) c.address = { street: order.delivery.street, number: order.delivery.number, neighborhood: order.delivery.neighborhood };
+  c.ordersCount += 1;
+  if (new Date(order.createdAt) >= new Date(c.lastOrderAt)) c.lastOrderAt = order.createdAt;
 }
 
 // migra bancos antigos que não tinham os campos novos
@@ -88,7 +105,21 @@ function migrate(data) {
     delete item.addons;
     return item;
   });
-  data.orders = (data.orders || []).map((o) => Object.assign({ delivery: null, stockReturned: false, dispatched: false, dispatchedAt: null }, o));
+  data.orders = (data.orders || []).map((o) => Object.assign({ delivery: null, stockReturned: false, dispatched: false, dispatchedAt: null, readyAt: null, trackToken: uid() + uid() }, o));
+  if (!data.customers || typeof data.customers !== "object" || Array.isArray(data.customers)) data.customers = {};
+  if (!Array.isArray(data.broadcastTemplates)) data.broadcastTemplates = [];
+  if (!data.humanRequests || typeof data.humanRequests !== "object") data.humanRequests = {};
+  if (typeof data.baseUrl !== "string") data.baseUrl = "";
+  // bancos antigos: monta o cadastro de clientes a partir dos pedidos já existentes
+  if (Object.keys(data.customers).length === 0 && data.orders.length) {
+    data.orders.slice().sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).forEach((o) => {
+      const phone = normalizePhoneBR(o.customerPhone);
+      if (!phone) return;
+      const fake = Object.assign({}, o, { customerPhone: phone, customerName: o.customerName ? titleCaseName(o.customerName) : "" });
+      upsertCustomer(data, fake);
+      if (o.status === "finalizado") data.customers[phone].totalSpent += o.total || 0;
+    });
+  }
   return data;
 }
 
@@ -150,25 +181,55 @@ function updateWaLog(id, patch) {
   broadcast("whatsapp_message", entry);
 }
 function findActiveOrderByPhone(phone) {
-  const digits = String(phone || "").replace(/\D/g, "");
-  const suffix = digits.slice(-8);
+  const suffix = String(phone || "").replace(/\D/g, "").slice(-8);
   const matches = db.orders.filter((o) => o.customerPhone && String(o.customerPhone).replace(/\D/g, "").slice(-8) === suffix && ["solicitacao", "producao", "pronto"].indexOf(o.status) !== -1);
   matches.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   return matches[0] || null;
 }
+function getBaseUrl() { return (process.env.PUBLIC_URL || db.baseUrl || "").replace(/\/+$/, ""); }
+function trackUrlFor(order) { return order && order.trackToken && getBaseUrl() ? getBaseUrl() + "/pedido/" + order.trackToken : ""; }
+function rememberBaseUrl(req) {
+  const proto = String(req.get("x-forwarded-proto") || req.protocol || "https").split(",")[0];
+  const url = proto + "://" + req.get("host");
+  if (db.baseUrl !== url) { db.baseUrl = url; persist(); }
+}
+
+// atendimento humano: cliente pediu falar com uma pessoa
+function humanList() { return Object.values(db.humanRequests).sort((a, b) => new Date(a.at) - new Date(b.at)); }
+function resolveHuman(phone) {
+  const key = normalizePhoneBR(phone);
+  if (db.humanRequests[key]) {
+    delete db.humanRequests[key];
+    persist();
+    broadcast("human_changed", { pending: humanList() });
+  }
+}
+
 const whatsapp = createWhatsApp({
   dataDir: DATA_DIR,
   onStatusChange: (status) => broadcast("whatsapp_status", status),
   onMessage: (entry) => pushWaLog(entry),
   onMessageUpdate: (id, patch) => updateWaLog(id, patch),
   getBotEnabled: () => !!db.config.whatsappBotEnabled,
+  isHumanPending: (phone) => !!db.humanRequests[normalizePhoneBR(phone)],
+  onHumanRequest: (phone) => {
+    const key = normalizePhoneBR(phone);
+    const c = db.customers[key];
+    if (!db.humanRequests[key]) {
+      db.humanRequests[key] = { phone: key, name: (c && c.name) || "", at: new Date().toISOString() };
+      persist();
+    }
+    broadcast("human_request", { request: db.humanRequests[key], pending: humanList() });
+  },
   onOptOut: (phone) => {
-    const digits = String(phone || "").replace(/\D/g, "");
+    const digits = normalizePhoneBR(phone);
     if (db.config.whatsappOptOut.indexOf(digits) === -1) { db.config.whatsappOptOut.push(digits); persist(); broadcast("config_changed", {}); }
   },
   getBotContext: () => ({
-    menuUrl: process.env.PUBLIC_URL || "",
-    findActiveOrderByPhone: findActiveOrderByPhone
+    menuUrl: () => getBaseUrl(),
+    findActiveOrderByPhone: findActiveOrderByPhone,
+    findCustomerName: (phone) => { const c = db.customers[normalizePhoneBR(phone)]; return c ? c.name : ""; },
+    trackUrlFor: trackUrlFor
   })
 });
 
@@ -401,19 +462,18 @@ app.post("/api/whatsapp/send", requireAuth, requireAdmin, async (req, res) => {
   if (!phone || !text) return res.status(400).json({ error: "telefone e mensagem são obrigatórios" });
   const ok = await whatsapp.sendMessage(phone, text, "manual");
   if (!ok) return res.status(503).json({ error: "WhatsApp não está conectado no momento" });
+  resolveHuman(phone); // alguém respondeu: encerra o alerta de atendimento humano desse cliente
   res.json({ ok: true });
 });
+app.get("/api/whatsapp/human-requests", requireAuth, requireAdmin, (req, res) => res.json({ pending: humanList() }));
+app.post("/api/whatsapp/human-requests/:phone/resolve", requireAuth, requireAdmin, (req, res) => { resolveHuman(req.params.phone); res.json({ ok: true }); });
 app.get("/api/whatsapp/contacts", requireAuth, requireAdmin, (req, res) => {
   const byPhone = {};
-  db.orders.forEach((o) => {
-    const digits = String(o.customerPhone || "").replace(/\D/g, "");
-    if (!digits) return;
-    if (!byPhone[digits] || new Date(o.createdAt) > new Date(byPhone[digits].lastOrderAt)) {
-      byPhone[digits] = { phone: digits, name: o.customerName || "", lastOrderAt: o.createdAt };
-    }
-  });
-  const list = Object.values(byPhone).map((c) => Object.assign({ optedOut: db.config.whatsappOptOut.indexOf(c.phone) !== -1 }, c));
-  list.sort((a, b) => new Date(b.lastOrderAt) - new Date(a.lastOrderAt));
+  Object.values(db.customers).forEach((c) => { byPhone[c.phone] = { phone: c.phone, name: c.name || "", lastOrderAt: c.lastOrderAt, address: c.address }; });
+  // quem só mandou mensagem (nunca pediu) também aparece
+  db.whatsappLog.forEach((m) => { if (m.direction === "in" && !byPhone[m.phone]) byPhone[m.phone] = { phone: m.phone, name: "", lastOrderAt: null, address: null }; });
+  const list = Object.values(byPhone).map((c) => Object.assign({ optedOut: db.config.whatsappOptOut.indexOf(c.phone) !== -1, human: !!db.humanRequests[c.phone] }, c));
+  list.sort((a, b) => new Date(b.lastOrderAt || 0) - new Date(a.lastOrderAt || 0));
   res.json({ contacts: list });
 });
 app.delete("/api/whatsapp/optout/:phone", requireAuth, requireAdmin, (req, res) => {
@@ -421,24 +481,76 @@ app.delete("/api/whatsapp/optout/:phone", requireAuth, requireAdmin, (req, res) 
   persist();
   res.json({ ok: true });
 });
+
+// ---------- modelos de transmissão ----------
+app.get("/api/broadcast-templates", requireAuth, requireAdmin, (req, res) => res.json({ templates: db.broadcastTemplates }));
+app.post("/api/broadcast-templates", requireAuth, requireAdmin, (req, res) => {
+  const { name, text, image } = req.body || {};
+  if (!name || !String(name).trim() || !text || !String(text).trim()) return res.status(400).json({ error: "nome e texto do modelo são obrigatórios" });
+  const t = { id: uid(), name: String(name).trim().slice(0, 60), text: String(text).slice(0, 1500), image: typeof image === "string" && image.startsWith("data:image") ? image.slice(0, 3000000) : "" };
+  db.broadcastTemplates.push(t);
+  persist();
+  res.status(201).json({ template: t });
+});
+app.put("/api/broadcast-templates/:id", requireAuth, requireAdmin, (req, res) => {
+  const t = db.broadcastTemplates.find((x) => x.id === req.params.id);
+  if (!t) return res.status(404).json({ error: "modelo não encontrado" });
+  const { name, text, image } = req.body || {};
+  if (name !== undefined) t.name = String(name).trim().slice(0, 60) || t.name;
+  if (text !== undefined) t.text = String(text).slice(0, 1500);
+  if (image !== undefined) t.image = typeof image === "string" && image.startsWith("data:image") ? image.slice(0, 3000000) : "";
+  persist();
+  res.json({ template: t });
+});
+app.delete("/api/broadcast-templates/:id", requireAuth, requireAdmin, (req, res) => {
+  db.broadcastTemplates = db.broadcastTemplates.filter((x) => x.id !== req.params.id);
+  persist();
+  res.json({ ok: true });
+});
+
 // envio em massa (lista de transmissão) - roda em segundo plano com atraso entre mensagens
-// pra reduzir risco de bloqueio (recomendação de mercado: alguns segundos entre cada envio)
+// pra reduzir risco de bloqueio (recomendação de mercado: alguns segundos entre cada envio).
+// {nome} no texto é trocado pelo primeiro nome de cada cliente.
 let broadcastRunning = false;
 app.post("/api/whatsapp/broadcast", requireAuth, requireAdmin, (req, res) => {
-  const { phones, text } = req.body || {};
+  const { phones, text, image } = req.body || {};
   if (!Array.isArray(phones) || !phones.length || !text) return res.status(400).json({ error: "lista de números e mensagem são obrigatórios" });
   if (broadcastRunning) return res.status(409).json({ error: "já existe uma transmissão em andamento, aguarde terminar" });
-  const targets = phones.map((p) => String(p).replace(/\D/g, "")).filter((p) => p && db.config.whatsappOptOut.indexOf(p) === -1);
+  const targets = Array.from(new Set(phones.map((p) => normalizePhoneBR(p)).filter((p) => p && db.config.whatsappOptOut.indexOf(p) === -1)));
+  const img = typeof image === "string" && image.startsWith("data:image") ? image : "";
   broadcastRunning = true;
   (async () => {
     for (const phone of targets) {
-      await whatsapp.sendMessage(phone, text + "\n\n_Não quer mais receber avisos? Responda PARAR._", "transmissao");
+      const c = db.customers[phone];
+      const nome = firstName(c && c.name) || "cliente";
+      const personalized = String(text).replace(/\{nome\}/gi, nome);
+      await whatsapp.sendMessage(phone, personalized + "\n\n_Não quer mais receber avisos? Responda PARAR._", "transmissao", undefined, img);
       await new Promise((r) => setTimeout(r, 5000 + Math.random() * 4000)); // 5-9s entre envios
     }
     broadcastRunning = false;
     broadcast("whatsapp_broadcast_done", { count: targets.length });
   })().catch(() => { broadcastRunning = false; });
   res.json({ ok: true, queued: targets.length, skipped: phones.length - targets.length });
+});
+
+// ---------- clientes cadastrados ----------
+app.get("/api/customers", requireAuth, (req, res) => {
+  const list = Object.values(db.customers).sort((a, b) => new Date(b.lastOrderAt) - new Date(a.lastOrderAt));
+  res.json({ customers: list });
+});
+app.put("/api/customers/:phone", requireAuth, requireAdmin, (req, res) => {
+  const c = db.customers[req.params.phone];
+  if (!c) return res.status(404).json({ error: "cliente não encontrado" });
+  const { name, address } = req.body || {};
+  if (name !== undefined) c.name = titleCaseName(name);
+  if (address !== undefined) c.address = address && address.street ? { street: String(address.street).slice(0, 160), number: String(address.number || "").slice(0, 20), neighborhood: String(address.neighborhood || "").slice(0, 80) } : null;
+  persist();
+  res.json({ customer: c });
+});
+app.delete("/api/customers/:phone", requireAuth, requireAdmin, (req, res) => {
+  delete db.customers[req.params.phone];
+  persist();
+  res.json({ ok: true });
 });
 
 // ---------- público (sem login) ----------
@@ -450,8 +562,9 @@ app.post("/api/public/orders", (req, res) => {
   if (!status.open) return res.status(403).json({ error: "restaurante fechado no momento", reason: status.reason });
 
   const body = req.body || {};
-  const { customerName, customerPhone, type, payment, lines, delivery } = body;
-  if (!customerName || !customerPhone) return res.status(400).json({ error: "nome e whatsapp são obrigatórios" });
+  const { customerName, type, payment, lines, delivery } = body;
+  const customerPhone = normalizePhoneBR(body.customerPhone);
+  if (!customerName || !String(customerName).trim() || !isValidBRPhone(customerPhone)) return res.status(400).json({ error: "nome e WhatsApp válido (com DDD) são obrigatórios" });
   if (!Array.isArray(lines) || lines.length === 0) return res.status(400).json({ error: "pedido vazio" });
   if (!["local", "delivery", "retirada"].includes(type)) return res.status(400).json({ error: "tipo inválido" });
   const method = payment && payment.method;
@@ -472,20 +585,35 @@ app.post("/api/public/orders", (req, res) => {
   const total = itemsTotal + (deliveryInfo ? deliveryInfo.fee : 0);
 
   const order = {
-    id: uid(), number: generateOrderNumber(), source: "publico", lines: resolvedLines, type,
-    customerName: String(customerName).slice(0, 120), customerPhone: String(customerPhone).slice(0, 40),
+    id: uid(), number: generateOrderNumber(), trackToken: uid() + uid(), source: "publico", lines: resolvedLines, type,
+    customerName: titleCaseName(customerName), customerPhone: customerPhone,
     delivery: deliveryInfo, total,
     payment: { method, status: method === "pix_online" ? "aguardando" : "nao_aplica" },
-    status: "solicitacao", createdAt: new Date().toISOString(), acceptedAt: null, finalizedAt: null, stockReturned: false, dispatched: false, dispatchedAt: null
+    status: "solicitacao", createdAt: new Date().toISOString(), acceptedAt: null, readyAt: null, finalizedAt: null, stockReturned: false, dispatched: false, dispatchedAt: null
   };
   applyStockDelta(resolvedLines, -1);
   db.orders.push(order);
+  upsertCustomer(db, order);
+  rememberBaseUrl(req);
   persist();
   broadcast("orders_changed", { reason: "novo_pedido" });
-  whatsapp.sendMessage(order.customerPhone, whatsapp.orderConfirmationText(order, fmtMoneyServer), "confirmacao_pedido").catch(() => {});
-  res.status(201).json({ order });
+  whatsapp.sendMessage(order.customerPhone, whatsapp.orderConfirmationText(order, fmtMoneyServer, trackUrlFor(order)), "confirmacao_pedido").catch(() => {});
+  res.status(201).json({ order: order, trackUrl: trackUrlFor(order) });
 });
 
+// acompanhamento público do pedido (link temporário, sem login)
+app.get("/api/public/orders/:token", (req, res) => {
+  const order = db.orders.find((o) => o.trackToken === req.params.token);
+  if (!order) return res.status(404).json({ error: "pedido não encontrado ou link expirado" });
+  res.json({ order: {
+    number: order.number, status: order.status, type: order.type, lines: order.lines, total: order.total,
+    customerName: order.customerName, customerPhone: order.customerPhone, delivery: order.delivery,
+    createdAt: order.createdAt, acceptedAt: order.acceptedAt, readyAt: order.readyAt,
+    dispatched: order.dispatched, dispatchedAt: order.dispatchedAt, finalizedAt: order.finalizedAt
+  } });
+});
+
+// ---------- cardápio (autenticado) ----------
 // ---------- cardápio (autenticado) ----------
 app.get("/api/menu", requireAuth, (req, res) => res.json({ menu: staffMenuList() }));
 app.post("/api/menu", requireAuth, (req, res) => {
@@ -639,7 +767,7 @@ app.get("/api/menu/backup", requireAuth, (req, res) => {
   // backup de verdade: tudo que define o restaurante, menos a sessão do WhatsApp e o slug de acesso da equipe
   const cfgCopy = Object.assign({}, db.config);
   delete cfgCopy.staffSlug;
-  const backup = { type: "brothers-backup", version: 3, exportedAt: new Date().toISOString(), menu: db.menu, config: cfgCopy };
+  const backup = { type: "brothers-backup", version: 4, exportedAt: new Date().toISOString(), menu: db.menu, config: cfgCopy, customers: db.customers, broadcastTemplates: db.broadcastTemplates };
   res.set({ "Content-Type": "application/json; charset=utf-8", "Content-Disposition": 'attachment; filename="backup-brothers-' + todayStr() + '.json"' });
   res.send(JSON.stringify(backup, null, 2));
 });
@@ -660,6 +788,8 @@ app.post("/api/menu/backup/restore", requireAuth, requireAdmin, (req, res) => {
     if (typeof b.logoImage === "string") db.config.logoImage = b.logoImage;
     if (typeof b.coverImage === "string") db.config.coverImage = b.coverImage;
   }
+  if (b.customers && typeof b.customers === "object") db.customers = b.customers;
+  if (Array.isArray(b.broadcastTemplates)) db.broadcastTemplates = b.broadcastTemplates;
   persist();
   broadcast("menu_changed", {});
   broadcast("config_changed", {});
@@ -694,26 +824,31 @@ app.get("/api/orders", requireAuth, (req, res) => {
   res.json({ orders: list });
 });
 app.post("/api/orders", requireAuth, (req, res) => {
-  const { customerName, customerPhone, type, lines, delivery } = req.body || {};
+  const { customerName, customerPhone, type, lines, delivery, payment } = req.body || {};
   if (!Array.isArray(lines) || lines.length === 0) return res.status(400).json({ error: "pedido vazio" });
   if (!["local", "delivery", "retirada"].includes(type)) return res.status(400).json({ error: "tipo inválido" });
+  const method = ["dinheiro", "cartao", "pix"].indexOf(payment && payment.method) !== -1 ? payment.method : "dinheiro";
   let resolvedLines;
   try { resolvedLines = resolveOrderLines(lines); } catch (e) { return res.status(e.code || 400).json({ error: e.msg || "erro no pedido" }); }
   let deliveryInfo = null;
-  if (type === "delivery" && delivery && delivery.street) {
-    const fee = delivery.neighborhood ? (deliveryFeeFor(delivery.neighborhood) || 0) : 0;
-    deliveryInfo = { street: delivery.street, number: delivery.number || "", neighborhood: delivery.neighborhood || "", fee };
+  if (type === "delivery") {
+    if (!delivery || !delivery.street || !delivery.number || !delivery.neighborhood) return res.status(400).json({ error: "endereço de entrega é obrigatório para delivery" });
+    const fee = deliveryFeeFor(delivery.neighborhood);
+    if (fee === null) return res.status(400).json({ error: "bairro não atendido para entrega" });
+    deliveryInfo = { street: String(delivery.street).slice(0, 160), number: String(delivery.number).slice(0, 20), neighborhood: delivery.neighborhood, fee };
   }
   const itemsTotal = resolvedLines.reduce((s, l) => s + l.price * l.qty, 0);
   const total = itemsTotal + (deliveryInfo ? deliveryInfo.fee : 0);
+  const phone = customerPhone ? normalizePhoneBR(customerPhone) : "";
   const order = {
-    id: uid(), number: generateOrderNumber(), source: "balcao", lines: resolvedLines, type,
-    customerName: (customerName || "").slice(0, 120), customerPhone: (customerPhone || "").slice(0, 40), delivery: deliveryInfo, total,
-    payment: { method: "balcao", status: "nao_aplica" }, status: "producao",
-    createdAt: new Date().toISOString(), acceptedAt: null, finalizedAt: null, stockReturned: false, dispatched: false, dispatchedAt: null
+    id: uid(), number: generateOrderNumber(), trackToken: uid() + uid(), source: "balcao", lines: resolvedLines, type,
+    customerName: customerName ? titleCaseName(customerName) : "", customerPhone: phone, delivery: deliveryInfo, total,
+    payment: { method: method, status: "nao_aplica" }, status: "producao",
+    createdAt: new Date().toISOString(), acceptedAt: new Date().toISOString(), readyAt: null, finalizedAt: null, stockReturned: false, dispatched: false, dispatchedAt: null
   };
   applyStockDelta(resolvedLines, -1);
   db.orders.push(order);
+  if (phone) upsertCustomer(db, order);
   persist();
   broadcast("orders_changed", { reason: "novo_pedido_balcao" });
   res.status(201).json({ order });
@@ -746,7 +881,11 @@ app.patch("/api/orders/:id/status", requireAuth, async (req, res) => {
   if ((status === "recusado" || status === "cancelado") && !order.stockReturned) { applyStockDelta(order.lines, +1); order.stockReturned = true; }
   order.status = status;
   if (status === "producao" && !order.acceptedAt) order.acceptedAt = new Date().toISOString();
-  if (status === "finalizado") order.finalizedAt = new Date().toISOString();
+  if (status === "pronto" && !order.readyAt) order.readyAt = new Date().toISOString();
+  if (status === "finalizado") {
+    order.finalizedAt = new Date().toISOString();
+    if (order.customerPhone && db.customers[order.customerPhone]) db.customers[order.customerPhone].totalSpent += order.total || 0;
+  }
   persist();
   broadcast("orders_changed", { reason: "status_alterado" });
   if (order.customerPhone && ["producao", "pronto", "finalizado"].indexOf(status) !== -1) {

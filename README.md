@@ -1,5 +1,58 @@
 # Brothers — sistema completo (nuvem + desktop)
 
+## Novidades da v8 — telefone/nome inteligentes, clientes, acompanhamento em tempo real, atendimento humano
+
+**Telefone**: agora aceita qualquer forma de digitar (com ou sem DDD, com ou sem o 9º
+dígito, com ou sem +55) e sempre normaliza pro padrão certo (55 + DDD 92 por padrão +
+9 dígitos). Resolve de vez o problema de mensagens que não chegavam por número mal
+formatado.
+
+**Nome sempre com inicial maiúscula**, tanto no que o cliente digita no link público
+quanto no que a equipe digita no balcão — automático, sem precisar lembrar.
+
+**Aba Clientes** (novo): toda vez que alguém pede, o sistema guarda nome, telefone e
+endereço automaticamente. Dá pra buscar, editar, e tem um atalho "💬 Conversar" que já
+abre a conversa dessa pessoa na aba WhatsApp.
+
+**"Pedir novamente"**: depois que o cliente finaliza um pedido no link público, da
+próxima vez que ele entrar aparece um aviso no topo oferecendo repetir o mesmo pedido —
+um toque e o carrinho enche sozinho.
+
+**Busca e categorias no cardápio público**: barra de busca no topo (procura em nome e
+descrição) e uma faixa com as categorias pra arrastar e pular direto pra uma delas.
+
+**Página de acompanhamento em tempo real** (a parte mais trabalhosa desta leva): assim
+que o cliente faz o pedido, ele é levado direto pra uma página só dele
+(`seulink.com/pedido/CODIGO`), que mostra a linha do tempo completa — hora do pedido,
+hora que foi pra produção, hora que ficou pronto, saiu pra entrega (se for o caso) e
+finalizado — junto com os itens, endereço se tiver, nome e telefone. Atualiza sozinha a
+cada 5 segundos, sem precisar logar em nada. O link já vem junto na mensagem de
+confirmação do WhatsApp também.
+
+**Corrigi o "Novo Pedido" no admin**: agora, ao marcar "Delivery", aparecem os campos de
+endereço e bairro certinho, igual no link público — antes isso realmente não existia aí
+e travava quem precisava lançar um pedido de telefone manualmente. Pagamento no admin
+ficou só com Dinheiro, Cartão e Pix (sem as variações de Pix só feitas sentido pro
+cliente público). Nome e telefone continuam opcionais pros pedidos feitos no balcão; já
+no link público, nome e WhatsApp válido são obrigatórios pra qualquer pedido.
+
+**Listas de transmissão com modelos salvos**: Configurações → aba WhatsApp → "🗂️ Modelos
+salvos" — salva uma combinação de foto + texto com um nome (ex: "Promo de segunda"), e
+na hora de montar uma transmissão nova é só escolher o modelo no lugar de escrever tudo
+de novo. As mensagens automáticas de pedido também ficaram mais pessoais, citando o
+primeiro nome do cliente em cada etapa.
+
+**Atendimento humano**: se o cliente mandar "atendente" ou pedir pra falar com uma
+pessoa no WhatsApp, o robô para de responder automaticamente pra esse número, ele sobe
+pro topo da lista de conversas com um ícone 🙋 e fundo destacado, e toca um som
+diferente do bipe normal — repetindo a cada 20 segundos até alguém responder (a
+primeira resposta de um atendente já resolve o alerta sozinho).
+
+**Corrigi também o campo de resposta da aba WhatsApp**, que estava com o botão gigante
+e a caixa de digitar pequena — era um conflito de estilo, já ajustado.
+
+
+
 ## Novidades da v7 — correção de mensagens "enviadas" que não chegavam
 
 **O que descobri:** existe um bug conhecido e ainda sem correção definitiva na própria

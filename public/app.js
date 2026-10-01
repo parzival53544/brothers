@@ -15,9 +15,15 @@
   function fmtMoney(v) { return "R$ " + (Math.round(v * 100) / 100).toFixed(2).replace(".", ","); }
   function fmtDateTime(iso) { var d = new Date(iso); return d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); }
   function typeLabel(t) { return t === "local" ? "Consumo no local" : t === "delivery" ? "Delivery" : "Retirada"; }
-  function payLabel(p) { return { dinheiro: "Dinheiro", cartao: "Cartão", pix_entrega: "Pix na entrega", pix_online: "Pix (online)", balcao: "Balcão" }[p] || p; }
+  function payLabel(p) { return { dinheiro: "Dinheiro", cartao: "Cartão", pix: "Pix", pix_entrega: "Pix na entrega", pix_online: "Pix (online)", balcao: "Balcão" }[p] || p; }
   function digitsOnly(s) { return String(s || "").replace(/\D/g, ""); }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
+  function titleCaseName(s) {
+    var out = String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
+    out = out.replace(/(^|[\s\-'])(\p{L})/gu, function (m, p, c) { return p + c.toUpperCase(); });
+    out = out.replace(/\s(Da|De|Do|Das|Dos|E)(?=\s|$)/g, function (m, w) { return " " + w.toLowerCase(); });
+    return out;
+  }
   function showToast(msg) { var t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show"); setTimeout(function () { t.classList.remove("show"); }, 2600); }
   function uidLocal() { return Math.random().toString(36).slice(2, 10); }
   // dataURLs de imagem não têm aspas simples, então é seguro embutir em style="...url('...')"
@@ -224,9 +230,12 @@
     document.getElementById("public-screen").style.display = name === "public" ? "block" : "none";
     document.getElementById("login-screen").style.display = name === "login" ? "block" : "none";
     document.getElementById("staff-screen").style.display = name === "staff" ? "block" : "none";
+    document.getElementById("track-screen").style.display = name === "track" ? "block" : "none";
   }
 
   async function boot() {
+    var trackMatch = location.pathname.match(/^\/pedido\/([a-zA-Z0-9]+)/);
+    if (trackMatch) { await bootTrackPage(trackMatch[1]); return; }
     await loadPublicMenuAndConfig();
     if (token) {
       try { var r = await api("/api/auth/me"); me = r.user; await enterStaff(); return; }
@@ -236,6 +245,52 @@
     var wantsStaff = qs.get("staff");
     if (wantsStaff && publicConfigCache && wantsStaff === publicConfigCache.staffSlug) { showScreen("login"); }
     else showScreen("public");
+  }
+
+  // ===================== PÁGINA DE ACOMPANHAMENTO (link público temporário) =====================
+  var TRACK_STEPS = [
+    { key: "createdAt", icon: "📝", label: "Pedido feito" },
+    { key: "acceptedAt", icon: "👨‍🍳", label: "Em produção" },
+    { key: "readyAt", icon: "🎉", label: "Pronto" },
+    { key: "dispatchedAt", icon: "🛵", label: "Saiu para entrega", deliveryOnly: true },
+    { key: "finalizedAt", icon: "✅", label: "Finalizado" }
+  ];
+  async function bootTrackPage(token2) {
+    showScreen("track");
+    try {
+      var c = await api("/api/public/config");
+      document.getElementById("track-cover").style.cssText = bgImgStyle(c.config.coverImage);
+      document.getElementById("track-avatar").style.cssText = bgImgStyle(c.config.logoImage);
+    } catch (e) {}
+    await refreshTrackPage(token2);
+    setInterval(function () { refreshTrackPage(token2); }, 5000);
+  }
+  async function refreshTrackPage(token2) {
+    var r;
+    try { r = await fetch("/api/public/orders/" + token2).then(function (res) { if (!res.ok) throw new Error("not found"); return res.json(); }); }
+    catch (e) { document.getElementById("track-card").innerHTML = '<div class="empty-hint">Pedido não encontrado ou link expirado.</div>'; return; }
+    var o = r.order;
+    document.getElementById("track-num").textContent = "Pedido #" + String(o.number).padStart(3, "0") + " — " + typeLabel(o.type);
+    var steps = TRACK_STEPS.filter(function (s) { return !s.deliveryOnly || o.type === "delivery"; });
+    var reachedEnd = false;
+    document.getElementById("track-timeline").innerHTML = steps.map(function (s, idx) {
+      var done = !!o[s.key];
+      var isCurrent = done && !reachedEnd && (idx === steps.length - 1 || !o[steps[idx + 1] ? steps[idx + 1].key : ""]);
+      if (done && idx === steps.length - 1) reachedEnd = true;
+      return '<div class="track-step ' + (done ? "done" : "") + (isCurrent && o.status !== "finalizado" ? " current" : "") + '">' +
+        '<div class="dot">' + (done ? "✓" : s.icon) + '</div>' +
+        '<div><div class="label">' + s.label + '</div>' + (done ? '<div class="time">' + fmtDateTime(o[s.key]) + '</div>' : '<div class="time">—</div>') + '</div></div>';
+    }).join("");
+    document.getElementById("track-items").innerHTML = o.lines.map(function (l) {
+      return '<div class="order-line"><div class="row1"><span class="nm">' + l.qty + 'x ' + escapeHtml(l.name) + (l.addons && l.addons.length ? '<span class="addons-note"><br>+ ' + escapeHtml(l.addons.map(function (a) { return a.name; }).join(", ")) + '</span>' : '') + '</span><span class="lp">' + fmtMoney(l.price * l.qty) + '</span></div></div>';
+    }).join("");
+    document.getElementById("track-total").textContent = fmtMoney(o.total);
+    var addrBox = document.getElementById("track-address");
+    if (o.delivery) {
+      addrBox.style.display = "block";
+      addrBox.innerHTML = "📍 <strong>Endereço de entrega:</strong><br>" + escapeHtml(o.delivery.street) + ", " + escapeHtml(o.delivery.number) + " — " + escapeHtml(o.delivery.neighborhood);
+    } else addrBox.style.display = "none";
+    document.getElementById("track-customer").textContent = o.customerName + " · " + formatPhoneDisplay(o.customerPhone);
   }
 
   document.getElementById("btn-login").addEventListener("click", async function () {
@@ -265,6 +320,7 @@
     buildStaffTabs();
     staffConfigCache = (await api("/api/config")).config;
     applyAccentColor(staffConfigCache.accentColor);
+    fillStaffNeighborhoods();
     await Promise.all([loadStaffMenu(), renderPedidosBoard()]);
     if (me.role === "admin") { await loadConfigForm(); await renderUsersTable(); }
     resetStaffOrder();
@@ -301,6 +357,26 @@
       var active = document.querySelector("#staff-screen .view.active");
       if (active && active.id === "view-whatsapp") { await refreshWaMessages(); renderWaContactList(); renderWaThread(); }
     });
+    evtSource.addEventListener("human_request", function (e) {
+      if (me.role !== "admin") return;
+      try {
+        var data = JSON.parse(e.data);
+        waHumanPending = data.pending;
+        updateHumanAlertLoop();
+        showToast("🙋 " + (data.request.name || data.request.phone) + " pediu atendimento humano!");
+        var active = document.querySelector("#staff-screen .view.active");
+        if (active && active.id === "view-whatsapp") renderWaContactList();
+      } catch (err) {}
+    });
+    evtSource.addEventListener("human_changed", function (e) {
+      if (me.role !== "admin") return;
+      try {
+        waHumanPending = JSON.parse(e.data).pending;
+        updateHumanAlertLoop();
+        var active = document.querySelector("#staff-screen .view.active");
+        if (active && active.id === "view-whatsapp") renderWaContactList();
+      } catch (err) {}
+    });
     evtSource.onerror = function () {};
   }
 
@@ -308,6 +384,7 @@
     { id: "pedidos", label: "Pedidos", roles: ["admin", "garcom"] },
     { id: "novo", label: "Novo Pedido", roles: ["admin", "garcom"] },
     { id: "cardapio", label: "Cardápio", roles: ["admin", "garcom"] },
+    { id: "clientes", label: "Clientes", roles: ["admin", "garcom"] },
     { id: "historico", label: "Histórico", roles: ["admin", "garcom"] },
     { id: "relatorios", label: "Relatórios", roles: ["admin"] },
     { id: "whatsapp", label: "WhatsApp", roles: ["admin"] },
@@ -329,6 +406,7 @@
     document.getElementById("view-" + id).classList.add("active");
     if (id === "pedidos") renderPedidosBoard();
     if (id === "cardapio") renderMenuByCategory();
+    if (id === "clientes") renderCustomers();
     if (id === "historico") renderHistorico();
     if (id === "relatorios") applyReportRange("today");
     if (id === "whatsapp") loadWhatsAppView();
@@ -344,6 +422,7 @@
     if (item.stock.quantity <= 3) return "Só " + item.stock.quantity + " disponível(is)";
     return item.stock.quantity + " disponíveis";
   }
+  function catSlug(cat) { return String(cat).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-"); }
   function menuPickerHtml(menu, disabledCats, isStaff) {
     disabledCats = disabledCats || [];
     if (menu.length === 0) return '<div class="empty-hint">Nenhum item cadastrado ainda.</div>';
@@ -352,7 +431,7 @@
     var html = "";
     Object.keys(cats).forEach(function (cat) {
       var catOff = disabledCats.indexOf(cat) !== -1;
-      html += '<div class="cat-block"><h3>' + escapeHtml(cat) + (catOff ? " (desativada)" : "") + '</h3><div class="menu-grid">';
+      html += '<div class="cat-block" id="cat-block-' + catSlug(cat) + '"><h3>' + escapeHtml(cat) + (catOff ? " (desativada)" : "") + '</h3><div class="menu-grid">';
       cats[cat].forEach(function (it) {
         var soldOut = isStaff ? (it.stock && it.stock.enabled && it.stock.quantity <= 0) : it.unavailable;
         var out = soldOut || it.active === false || catOff;
@@ -442,6 +521,14 @@
       banner.textContent = publicConfigCache.status.reason === "fechado_emergencia" ? "Estamos temporariamente fechados. Volte em breve!" : "Estamos fechados no momento. Confira nosso horário de funcionamento.";
     } else banner.style.display = "none";
     document.getElementById("pub-menu-picker").innerHTML = menuPickerHtml(publicMenuCache, [], false);
+    wirePubMenuClicks();
+    renderCatScroller();
+    document.getElementById("pub-pay-online-btn").style.display = publicConfigCache.onlinePaymentEnabled ? "inline-block" : "none";
+    var sel = document.getElementById("pub-addr-neighborhood");
+    sel.innerHTML = '<option value="">Selecione...</option>' + publicConfigCache.deliveryZones.map(function (z) { return '<option value="' + escapeHtml(z.name) + '" data-fee="' + z.fee + '">' + escapeHtml(z.name) + ' — ' + fmtMoney(z.fee) + '</option>'; }).join("");
+    renderRepeatOrderBanner();
+  }
+  function wirePubMenuClicks() {
     document.querySelectorAll("#pub-menu-picker .menu-item-btn").forEach(function (btn) {
       if (!btn.disabled) btn.addEventListener("click", function () {
         if (!publicConfigCache.status.open) { showToast("O restaurante está fechado no momento."); return; }
@@ -449,9 +536,67 @@
         openItemDetail(item, addToPublicCart);
       });
     });
-    document.getElementById("pub-pay-online-btn").style.display = publicConfigCache.onlinePaymentEnabled ? "inline-block" : "none";
-    var sel = document.getElementById("pub-addr-neighborhood");
-    sel.innerHTML = '<option value="">Selecione...</option>' + publicConfigCache.deliveryZones.map(function (z) { return '<option value="' + escapeHtml(z.name) + '" data-fee="' + z.fee + '">' + escapeHtml(z.name) + ' — ' + fmtMoney(z.fee) + '</option>'; }).join("");
+  }
+  function renderCatScroller() {
+    var cats = [];
+    publicMenuCache.forEach(function (it) { var c = it.category || "Outros"; if (cats.indexOf(c) === -1) cats.push(c); });
+    var wrap = document.getElementById("cat-scroller");
+    if (cats.length < 2) { wrap.innerHTML = ""; wrap.style.display = "none"; return; }
+    wrap.style.display = "flex";
+    wrap.innerHTML = cats.map(function (c) { return '<button type="button" data-cat="' + catSlug(c) + '">' + escapeHtml(c) + '</button>'; }).join("");
+    wrap.querySelectorAll("button").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var el = document.getElementById("cat-block-" + btn.dataset.cat);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+  }
+  document.getElementById("pub-search").addEventListener("input", function () {
+    var q = this.value.toLowerCase().trim();
+    if (!q) {
+      document.getElementById("pub-menu-picker").innerHTML = menuPickerHtml(publicMenuCache, [], false);
+      document.getElementById("cat-scroller").style.display = publicMenuCache.length ? "flex" : "none";
+    } else {
+      var filtered = publicMenuCache.filter(function (it) { return (it.name || "").toLowerCase().indexOf(q) !== -1 || (it.description || "").toLowerCase().indexOf(q) !== -1; });
+      document.getElementById("pub-menu-picker").innerHTML = filtered.length ? menuPickerHtml(filtered, [], false) : '<div class="empty-hint">Nenhum item encontrado para "' + escapeHtml(this.value) + '".</div>';
+      document.getElementById("cat-scroller").style.display = "none";
+    }
+    wirePubMenuClicks();
+  });
+
+  // ---- pedir novamente ----
+  function saveLastOrderLocal(order) {
+    try {
+      localStorage.setItem("brothers_last_order", JSON.stringify({
+        lines: order.lines.map(function (l) { return { menuId: l.menuId, qty: l.qty, addonIds: l.addons ? l.addons.map(function (a) { return a.id; }) : [] }; }),
+        customerName: order.customerName, customerPhone: order.customerPhone, type: order.type, delivery: order.delivery
+      }));
+    } catch (e) {}
+  }
+  function renderRepeatOrderBanner() {
+    var banner = document.getElementById("repeat-order-banner");
+    var saved;
+    try { saved = JSON.parse(localStorage.getItem("brothers_last_order") || "null"); } catch (e) { saved = null; }
+    if (!saved || !saved.lines || !saved.lines.length) { banner.style.display = "none"; return; }
+    var validLines = saved.lines.filter(function (l) { return publicMenuCache.some(function (m) { return m.id === l.menuId && m.active !== false && !m.unavailable; }); });
+    if (!validLines.length) { banner.style.display = "none"; return; }
+    var names = validLines.map(function (l) { var m = publicMenuCache.find(function (x) { return x.id === l.menuId; }); return l.qty + "x " + (m ? m.name : ""); }).join(", ");
+    document.getElementById("repeat-order-text").textContent = "👋 Bem-vindo de volta! Pedir de novo: " + names;
+    banner.style.display = "flex";
+    document.getElementById("btn-repeat-order").onclick = function () {
+      pubCart.lines = [];
+      validLines.forEach(function (l) {
+        var item = publicMenuCache.find(function (m) { return m.id === l.menuId; });
+        var addons = (l.addonIds || []).map(function (aid) { var g = (item.addonGroups || []).find(function (gr) { return gr.options.some(function (o) { return o.id === aid; }); }); return g ? g.options.find(function (o) { return o.id === aid; }) : null; }).filter(Boolean);
+        var addonsTotal = addons.reduce(function (s, a) { return s + a.price; }, 0);
+        pubCart.lines.push({ lineId: uidLocal(), menuId: item.id, name: item.name, price: item.price + addonsTotal, qty: l.qty, addonIds: l.addonIds || [], addonsLabel: addons.map(function (a) { return a.name; }).join(", ") });
+      });
+      renderCartBar();
+      if (saved.customerName) document.getElementById("pub-cust-name").value = saved.customerName;
+      if (saved.customerPhone) document.getElementById("pub-cust-phone").value = saved.customerPhone;
+      showToast("Itens adicionados ao pedido!");
+      openCheckout();
+    };
   }
   function addToPublicCart(item, qty, addons) {
     var addonsTotal = addons.reduce(function (s, a) { return s + a.price; }, 0);
@@ -542,6 +687,7 @@
     document.getElementById("pub-pix-box").style.display = "none";
     renderCartBar();
   }
+  document.getElementById("pub-cust-name").addEventListener("blur", function () { this.value = titleCaseName(this.value); });
   document.getElementById("btn-pub-submit").addEventListener("click", async function () {
     if (pubCart.lines.length === 0) { showToast("Adicione ao menos um item."); return; }
     var name = document.getElementById("pub-cust-name").value.trim();
@@ -561,12 +707,10 @@
         body: { customerName: name, customerPhone: phone, type: pubCheckout.type, payment: { method: pubCheckout.pay }, delivery: deliveryPayload, lines: pubCart.lines.map(function (l) { return { menuId: l.menuId, qty: l.qty, addonIds: l.addonIds || [] }; }) }
       });
       var order = r.order;
-      var msg = buildWhatsAppOrderText(order);
-      var restNumber = digitsOnly(publicConfigCache.whatsapp);
+      saveLastOrderLocal(order);
       document.getElementById("checkout-modal").classList.remove("show");
-      var box = document.getElementById("pub-confirm-box");
-      showToast("Pedido nº " + String(order.number).padStart(3, "0") + " enviado!");
-      if (restNumber) window.open("https://wa.me/55" + restNumber + "?text=" + encodeURIComponent(msg), "_blank");
+      if (r.trackUrl) { location.href = r.trackUrl; return; }
+      showToast("Pedido nº " + String(order.number).padStart(3, "0") + " enviado! Você vai receber as atualizações pelo WhatsApp.");
       resetPublicCheckout();
       loadPublicMenuAndConfig();
     } catch (e) { showToast("Não foi possível enviar: " + e.message); }
@@ -672,11 +816,13 @@
   var waMessagesCache = [];
   var waContactsCache = [];
   var waSelectedPhone = null;
+  var waHumanPending = []; // [{phone, name, at}]
+  var humanAlertTimer = null;
 
   async function loadWhatsAppView() {
     await refreshWaStatus();
     document.getElementById("wa-bot-toggle").checked = !!(staffConfigCache && staffConfigCache.whatsappBotEnabled);
-    await Promise.all([refreshWaMessages(), refreshWaContacts()]);
+    await Promise.all([refreshWaMessages(), refreshWaContacts(), refreshHumanPending()]);
     renderWaContactList();
     renderWaThread();
   }
@@ -696,6 +842,36 @@
   async function refreshWaContacts() {
     try { var r = await api("/api/whatsapp/contacts"); waContactsCache = r.contacts; } catch (e) {}
   }
+  async function refreshHumanPending() {
+    try { var r = await api("/api/whatsapp/human-requests"); waHumanPending = r.pending; } catch (e) {}
+    updateHumanAlertLoop();
+  }
+  function isHumanPending(phone) { return waHumanPending.some(function (h) { return h.phone === phone; }); }
+  // som diferente do bipe normal de pedido novo, repete a cada 20s enquanto tiver alguém esperando atendimento humano
+  function humanAlertBeep() {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [1400, 900, 1400].forEach(function (freq, i) {
+        setTimeout(function () {
+          var o = ctx.createOscillator(), g = ctx.createGain();
+          o.type = "square"; o.frequency.value = freq;
+          g.gain.setValueAtTime(0.0001, ctx.currentTime);
+          g.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.02);
+          g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+          o.connect(g); g.connect(ctx.destination);
+          o.start(); o.stop(ctx.currentTime + 0.2);
+        }, i * 150);
+      });
+    } catch (e) {}
+  }
+  function updateHumanAlertLoop() {
+    if (waHumanPending.length > 0 && !humanAlertTimer) {
+      humanAlertBeep();
+      humanAlertTimer = setInterval(humanAlertBeep, 20000);
+    } else if (waHumanPending.length === 0 && humanAlertTimer) {
+      clearInterval(humanAlertTimer); humanAlertTimer = null;
+    }
+  }
   function contactName(phone) {
     var c = waContactsCache.find(function (x) { return x.phone === phone; });
     return (c && c.name) || phone;
@@ -706,15 +882,25 @@
       if (!threads[m.phone]) threads[m.phone] = [];
       threads[m.phone].push(m);
     });
-    var phones = Object.keys(threads).sort(function (a, b) { return new Date(threads[b][threads[b].length - 1].at) - new Date(threads[a][threads[a].length - 1].at); });
+    // garante que quem está esperando atendimento humano apareça na lista mesmo sem mensagem visível ainda
+    waHumanPending.forEach(function (h) { if (!threads[h.phone]) threads[h.phone] = []; });
+    var phones = Object.keys(threads).sort(function (a, b) {
+      var ha = isHumanPending(a), hb = isHumanPending(b);
+      if (ha !== hb) return ha ? -1 : 1; // quem pediu humano sempre sobe pro topo
+      var la = threads[a].length ? threads[a][threads[a].length - 1].at : 0;
+      var lb = threads[b].length ? threads[b][threads[b].length - 1].at : 0;
+      return new Date(lb) - new Date(la);
+    });
     var wrap = document.getElementById("wa-contact-list");
     if (!phones.length) { wrap.innerHTML = '<div class="empty-hint">Nenhuma conversa ainda.</div>'; return; }
     wrap.innerHTML = phones.map(function (phone) {
-      var last = threads[phone][threads[phone].length - 1];
+      var msgs = threads[phone];
+      var last = msgs.length ? msgs[msgs.length - 1] : null;
       var optedOut = waContactsCache.some(function (c) { return c.phone === phone && c.optedOut; });
-      return '<div class="wa-contact-row' + (phone === waSelectedPhone ? ' active' : '') + '" data-phone="' + phone + '">' +
-        '<div class="nm">' + escapeHtml(contactName(phone)) + (optedOut ? ' <span class="optout-flag">saiu</span>' : '') + '</div>' +
-        '<div class="prev">' + (last.direction === "out" ? "você: " : "") + escapeHtml(last.text.slice(0, 40)) + '</div></div>';
+      var human = isHumanPending(phone);
+      return '<div class="wa-contact-row' + (phone === waSelectedPhone ? ' active' : '') + (human ? ' human-pending' : '') + '" data-phone="' + phone + '">' +
+        '<div class="nm">' + (human ? '🙋 ' : '') + escapeHtml(contactName(phone)) + (optedOut ? ' <span class="optout-flag">saiu</span>' : '') + '</div>' +
+        '<div class="prev">' + (human ? '<strong>Pediu atendimento humano</strong>' : (last ? (last.direction === "out" ? "você: " : "") + escapeHtml(last.text.slice(0, 40)) : "")) + '</div></div>';
     }).join("");
     wrap.querySelectorAll(".wa-contact-row").forEach(function (row) {
       row.addEventListener("click", function () { waSelectedPhone = row.dataset.phone; renderWaContactList(); renderWaThread(); });
@@ -748,21 +934,37 @@
     var text = document.getElementById("wa-reply-text").value.trim();
     if (!text) return;
     document.getElementById("wa-reply-text").value = "";
-    try { await api("/api/whatsapp/send", { method: "POST", body: { phone: waSelectedPhone, text: text } }); await refreshWaMessages(); renderWaContactList(); renderWaThread(); }
+    try { await api("/api/whatsapp/send", { method: "POST", body: { phone: waSelectedPhone, text: text } }); await Promise.all([refreshWaMessages(), refreshHumanPending()]); renderWaContactList(); renderWaThread(); }
     catch (e) { showToast(e.message); }
   });
   document.getElementById("wa-reply-text").addEventListener("keydown", function (e) { if (e.key === "Enter") document.getElementById("btn-wa-reply").click(); });
 
   // ---- transmissão ----
+  var templatesCache = [];
+  var bcSelectedImage = "";
+  async function refreshTemplates() {
+    try { var r = await api("/api/broadcast-templates"); templatesCache = r.templates; } catch (e) {}
+  }
   document.getElementById("btn-open-broadcast").addEventListener("click", async function () {
-    await refreshWaContacts();
+    await Promise.all([refreshWaContacts(), refreshTemplates()]);
     var wrap = document.getElementById("bc-contact-list");
     wrap.innerHTML = waContactsCache.length ? waContactsCache.map(function (c) {
       return '<label class="group-check-row"><input type="checkbox" class="bc-check" value="' + c.phone + '" ' + (c.optedOut ? "disabled" : "") + '> ' +
         escapeHtml(c.name || c.phone) + ' (' + c.phone + ')' + (c.optedOut ? ' <span class="optout-flag">saiu da lista</span>' : '') + '</label>';
     }).join("") : '<div class="empty-hint">Nenhum contato ainda — aparecem aqui assim que os primeiros pedidos chegarem.</div>';
+    document.getElementById("bc-template-select").innerHTML = '<option value="">Escrever do zero…</option>' + templatesCache.map(function (t) { return '<option value="' + t.id + '">' + escapeHtml(t.name) + '</option>'; }).join("");
     document.getElementById("bc-text").value = "";
+    bcSelectedImage = "";
+    document.getElementById("bc-image-preview").style.display = "none";
     document.getElementById("broadcast-modal").classList.add("show");
+  });
+  document.getElementById("bc-template-select").addEventListener("change", function () {
+    var t = templatesCache.find(function (x) { return x.id === this.value; }, this);
+    if (!t) { document.getElementById("bc-text").value = ""; bcSelectedImage = ""; document.getElementById("bc-image-preview").style.display = "none"; return; }
+    document.getElementById("bc-text").value = t.text;
+    bcSelectedImage = t.image || "";
+    document.getElementById("bc-image-preview").style.cssText = bgImgStyle(bcSelectedImage);
+    document.getElementById("bc-image-preview").style.display = bcSelectedImage ? "block" : "none";
   });
   document.getElementById("broadcast-close").addEventListener("click", function () { document.getElementById("broadcast-modal").classList.remove("show"); });
   document.getElementById("bc-select-all").addEventListener("click", function () { document.querySelectorAll(".bc-check:not(:disabled)").forEach(function (c) { c.checked = true; }); });
@@ -773,14 +975,66 @@
     if (!phones.length || !text) { showToast("Selecione ao menos um contato e escreva a mensagem."); return; }
     if (phones.length > 20 && !confirm("Enviar para " + phones.length + " contatos? O envio é gradual e pode levar alguns minutos.")) return;
     try {
-      var r = await api("/api/whatsapp/broadcast", { method: "POST", body: { phones: phones, text: text } });
+      var r = await api("/api/whatsapp/broadcast", { method: "POST", body: { phones: phones, text: text, image: bcSelectedImage } });
       showToast("Transmissão iniciada para " + r.queued + " contato(s). Acompanhe em Conversas.");
       document.getElementById("broadcast-modal").classList.remove("show");
     } catch (e) { showToast(e.message); }
   });
 
+  // ---- gerenciar modelos de transmissão ----
+  var tmEditingId = null, tmImage = "";
+  function renderTemplateList() {
+    var wrap = document.getElementById("template-list");
+    wrap.innerHTML = templatesCache.length ? templatesCache.map(function (t) {
+      return '<div class="group-card" data-id="' + t.id + '"><div>' + (t.image ? '<span style="display:inline-block; width:32px; height:32px; border-radius:6px; vertical-align:middle; margin-right:8px; ' + bgImgStyle(t.image) + '; background-size:cover; background-position:center;"></span>' : '') +
+        '<strong>' + escapeHtml(t.name) + '</strong><div class="meta">' + escapeHtml(t.text.slice(0, 50)) + '…</div></div>' +
+        '<div><button class="btn btn-ghost btn-small t-edit">Editar</button> <button class="btn btn-danger btn-small t-del">Excluir</button></div></div>';
+    }).join("") : '<div class="empty-hint">Nenhum modelo salvo ainda.</div>';
+    wrap.querySelectorAll(".group-card").forEach(function (card) {
+      var id = card.dataset.id;
+      card.querySelector(".t-edit").addEventListener("click", function () { openTemplateForm(templatesCache.find(function (t) { return t.id === id; })); });
+      card.querySelector(".t-del").addEventListener("click", async function () {
+        if (!confirm("Excluir este modelo?")) return;
+        try { await api("/api/broadcast-templates/" + id, { method: "DELETE" }); await refreshTemplates(); renderTemplateList(); } catch (e) { showToast(e.message); }
+      });
+    });
+  }
+  function openTemplateForm(t) {
+    tmEditingId = t ? t.id : null;
+    tmImage = t ? (t.image || "") : "";
+    document.getElementById("tm-form-title").textContent = t ? "Editar modelo" : "Novo modelo";
+    document.getElementById("tm-name").value = t ? t.name : "";
+    document.getElementById("tm-text").value = t ? t.text : "";
+    document.getElementById("tm-image-preview").style.cssText = bgImgStyle(tmImage);
+    document.getElementById("tm-cancel-edit").style.display = t ? "block" : "none";
+  }
+  document.getElementById("btn-manage-templates").addEventListener("click", async function () {
+    await refreshTemplates();
+    renderTemplateList();
+    openTemplateForm(null);
+    document.getElementById("template-modal").classList.add("show");
+  });
+  document.getElementById("template-modal-close").addEventListener("click", function () { document.getElementById("template-modal").classList.remove("show"); });
+  document.getElementById("tm-cancel-edit").addEventListener("click", function () { openTemplateForm(null); });
+  document.getElementById("btn-pick-template-image").addEventListener("click", function () {
+    openImagePicker(function (dataUrl) { tmImage = dataUrl; document.getElementById("tm-image-preview").style.cssText = bgImgStyle(tmImage); });
+  });
+  document.getElementById("tm-save").addEventListener("click", async function () {
+    var name = document.getElementById("tm-name").value.trim();
+    var text = document.getElementById("tm-text").value.trim();
+    if (!name || !text) { showToast("Preencha nome e mensagem do modelo."); return; }
+    try {
+      if (tmEditingId) await api("/api/broadcast-templates/" + tmEditingId, { method: "PUT", body: { name: name, text: text, image: tmImage } });
+      else await api("/api/broadcast-templates", { method: "POST", body: { name: name, text: text, image: tmImage } });
+      await refreshTemplates();
+      renderTemplateList();
+      openTemplateForm(null);
+      showToast("Modelo salvo.");
+    } catch (e) { showToast(e.message); }
+  });
+
   // ===================== NOVO PEDIDO (balcão) =====================
-  var currentOrder = { type: "local", lines: [] };
+  var currentOrder = { type: "local", pay: "dinheiro", lines: [] };
   var editingOrderId = null;
   async function loadStaffMenu() {
     try { var r = await api("/api/menu"); staffMenuCache = r.menu; } catch (e) { staffMenuCache = []; }
@@ -792,9 +1046,27 @@
       });
     });
   }
+  function fillStaffNeighborhoods() {
+    var sel = document.getElementById("staff-addr-neighborhood");
+    var zones = (staffConfigCache && staffConfigCache.deliveryZones) || [];
+    sel.innerHTML = '<option value="">Selecione...</option>' + zones.map(function (z) { return '<option value="' + escapeHtml(z.name) + '">' + escapeHtml(z.name) + ' — ' + fmtMoney(z.fee) + '</option>'; }).join("");
+  }
   document.querySelectorAll("#staff-type-toggle button").forEach(function (b) {
-    b.addEventListener("click", function () { currentOrder.type = b.dataset.type; document.querySelectorAll("#staff-type-toggle button").forEach(function (x) { x.classList.remove("sel"); }); b.classList.add("sel"); });
+    b.addEventListener("click", function () {
+      currentOrder.type = b.dataset.type;
+      document.querySelectorAll("#staff-type-toggle button").forEach(function (x) { x.classList.remove("sel"); });
+      b.classList.add("sel");
+      document.getElementById("staff-delivery-box").style.display = currentOrder.type === "delivery" ? "block" : "none";
+    });
   });
+  document.querySelectorAll("#staff-pay-toggle button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      currentOrder.pay = b.dataset.pay;
+      document.querySelectorAll("#staff-pay-toggle button").forEach(function (x) { x.classList.remove("sel"); });
+      b.classList.add("sel");
+    });
+  });
+  document.getElementById("cust-name").addEventListener("blur", function () { this.value = titleCaseName(this.value); });
   function addToStaffOrder(item, qty, addons) {
     var addonsTotal = addons.reduce(function (s, a) { return s + a.price; }, 0);
     currentOrder.lines.push({ menuId: item.id, name: item.name, price: item.price + addonsTotal, qty: qty, addonIds: addons.map(function (a) { return a.id; }), addonsLabel: addons.map(function (a) { return a.name; }).join(", ") });
@@ -820,9 +1092,12 @@
     document.getElementById("order-total").textContent = fmtMoney(total);
   }
   function resetStaffOrder() {
-    currentOrder = { type: "local", lines: [] }; editingOrderId = null;
+    currentOrder = { type: "local", pay: "dinheiro", lines: [] }; editingOrderId = null;
     document.getElementById("cust-name").value = ""; document.getElementById("cust-phone").value = "";
+    document.getElementById("staff-addr-street").value = ""; document.getElementById("staff-addr-number").value = ""; document.getElementById("staff-addr-neighborhood").value = "";
     document.querySelectorAll("#staff-type-toggle button").forEach(function (b) { b.classList.toggle("sel", b.dataset.type === "local"); });
+    document.querySelectorAll("#staff-pay-toggle button").forEach(function (b) { b.classList.toggle("sel", b.dataset.pay === "dinheiro"); });
+    document.getElementById("staff-delivery-box").style.display = "none";
     document.getElementById("btn-cancel-edit").style.display = "none";
     document.getElementById("order-panel-title").textContent = "Pedido atual";
     document.getElementById("btn-submit-order").textContent = "Enviar pedido e imprimir";
@@ -832,9 +1107,17 @@
   document.getElementById("btn-cancel-edit").addEventListener("click", resetStaffOrder);
   document.getElementById("btn-submit-order").addEventListener("click", async function () {
     if (currentOrder.lines.length === 0) { showToast("Adicione ao menos um item."); return; }
-    var name = document.getElementById("cust-name").value.trim();
+    var name = titleCaseName(document.getElementById("cust-name").value.trim());
     var phone = document.getElementById("cust-phone").value.trim();
-    var payload = { customerName: name, customerPhone: phone, type: currentOrder.type, lines: currentOrder.lines.map(function (l) { return { menuId: l.menuId, qty: l.qty, addonIds: l.addonIds || [] }; }) };
+    var delivery = null;
+    if (currentOrder.type === "delivery") {
+      var street = document.getElementById("staff-addr-street").value.trim();
+      var number = document.getElementById("staff-addr-number").value.trim();
+      var neighborhood = document.getElementById("staff-addr-neighborhood").value;
+      if (!street || !number || !neighborhood) { showToast("Preencha o endereço de entrega."); return; }
+      delivery = { street: street, number: number, neighborhood: neighborhood };
+    }
+    var payload = { customerName: name, customerPhone: phone, type: currentOrder.type, delivery: delivery, payment: { method: currentOrder.pay }, lines: currentOrder.lines.map(function (l) { return { menuId: l.menuId, qty: l.qty, addonIds: l.addonIds || [] }; }) };
     try {
       var order;
       if (editingOrderId) {
@@ -1171,6 +1454,50 @@
     this.value = "";
   });
 
+  // ===================== CLIENTES =====================
+  var customersCache = [];
+  async function renderCustomers() {
+    try { var r = await api("/api/customers"); customersCache = r.customers; } catch (e) { return; }
+    filterAndRenderCustomers();
+  }
+  function filterAndRenderCustomers() {
+    var q = (document.getElementById("cust-search").value || "").toLowerCase().trim();
+    var list = !q ? customersCache : customersCache.filter(function (c) { return (c.name || "").toLowerCase().indexOf(q) !== -1 || c.phone.indexOf(q.replace(/\D/g, "")) !== -1; });
+    var body = document.getElementById("customers-table-body");
+    document.getElementById("customers-empty").style.display = list.length ? "none" : "block";
+    body.innerHTML = list.map(function (c) {
+      var addr = c.address ? escapeHtml(c.address.street + ", " + c.address.number + " — " + c.address.neighborhood) : "—";
+      return '<tr data-phone="' + c.phone + '"><td>' + escapeHtml(c.name || "—") + '</td><td>' + formatPhoneDisplay(c.phone) + '</td><td>' + addr + '</td><td>' + c.ordersCount + '</td><td>' + fmtDateTime(c.lastOrderAt) + '</td>' +
+        '<td><button class="btn btn-ghost btn-small c-edit">Editar</button> <button class="btn btn-ghost btn-small c-chat">💬 Conversar</button></td></tr>';
+    }).join("");
+    body.querySelectorAll("tr").forEach(function (tr) {
+      var phone = tr.dataset.phone;
+      var c = customersCache.find(function (x) { return x.phone === phone; });
+      tr.querySelector(".c-edit").addEventListener("click", async function () {
+        var nn = prompt("Nome do cliente:", c.name || ""); if (nn === null) return;
+        var street = prompt("Rua/endereço:", c.address ? c.address.street : ""); if (street === null) return;
+        var number = street ? (prompt("Número:", c.address ? c.address.number : "") || "") : "";
+        var neighborhood = street ? (prompt("Bairro:", c.address ? c.address.neighborhood : "") || "") : "";
+        try {
+          await api("/api/customers/" + phone, { method: "PUT", body: { name: nn, address: street ? { street: street, number: number, neighborhood: neighborhood } : null } });
+          showToast("Cliente atualizado.");
+          renderCustomers();
+        } catch (e) { showToast(e.message); }
+      });
+      tr.querySelector(".c-chat").addEventListener("click", function () {
+        switchStaffView("whatsapp");
+        setTimeout(function () { waSelectedPhone = phone; renderWaContactList(); renderWaThread(); }, 300);
+      });
+    });
+  }
+  document.getElementById("cust-search").addEventListener("input", filterAndRenderCustomers);
+  function formatPhoneDisplay(digits) {
+    var d = String(digits || "").replace(/\D/g, "");
+    if (d.length === 13 && d.startsWith("55")) return "+55 (" + d.slice(2, 4) + ") " + d.slice(4, 9) + "-" + d.slice(9);
+    if (d.length === 12 && d.startsWith("55")) return "+55 (" + d.slice(2, 4) + ") " + d.slice(4, 8) + "-" + d.slice(8);
+    return d;
+  }
+
   // ===================== HISTÓRICO =====================
   async function renderHistorico() {
     var from = document.getElementById("hist-from").value;
@@ -1247,6 +1574,7 @@
     document.getElementById("cfg-logo-preview").style.cssText = bgImgStyle(r.config.logoImage);
     document.getElementById("cfg-timezone").value = r.config.timezone || "America/Manaus";
     renderDeliveryZones(r.config.deliveryZones || []);
+    fillStaffNeighborhoods();
     renderAddonGroupsList();
     renderHoursForm(r.config.businessHours);
     updateEmergencyBox(r.config.emergencyClosed);

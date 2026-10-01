@@ -10,9 +10,12 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion
 } = require("@whiskeysockets/baileys");
+const { normalizePhoneBR, firstName } = require("./phone");
 
-const RECONNECT_MITIGATION_MS = 6 * 60 * 60 * 1000; // reinício preventivo a cada 6h (mitigação sugerida pela comunidade pra mensagens que ficam "travadas")
-const ACK_TIMEOUT_MS = 20000; // se não confirmar em 20s, avisa que pode não ter chegado
+const RECONNECT_MITIGATION_MS = 6 * 60 * 60 * 1000; // reinício preventivo a cada 6h
+const ACK_TIMEOUT_MS = 20000; // se o WhatsApp não confirmar em 20s, avisa que pode não ter chegado
+
+const PAY_LABEL = { dinheiro: "Dinheiro", cartao: "Cartão", pix: "Pix", pix_entrega: "Pix na entrega", pix_online: "Pix (online)", balcao: "Balcão" };
 
 module.exports = function createWhatsApp(opts) {
   const AUTH_DIR = path.join(opts.dataDir, "wa-auth");
@@ -35,7 +38,7 @@ module.exports = function createWhatsApp(opts) {
       const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
       let version;
       try { version = (await fetchLatestBaileysVersion()).version; }
-      catch (e) { console.error("Não consegui checar a versão mais recente do protocolo do WhatsApp (provável falta de rede de saída) — usando a versão padrão da biblioteca:", e.message); }
+      catch (e) { console.error("Não consegui checar a versão mais recente do protocolo do WhatsApp — usando a padrão da biblioteca:", e.message); }
       sock = makeWASocket({ auth: authState, version: version, logger: pino({ level: "silent" }), printQRInTerminal: false });
       sock.ev.on("creds.update", saveCreds);
       sock.ev.on("connection.update", async (update) => {
@@ -52,9 +55,7 @@ module.exports = function createWhatsApp(opts) {
       sock.ev.on("messages.upsert", async (m) => {
         try { await handleIncoming(m); } catch (e) { console.error("Erro processando mensagem do WhatsApp:", e.message); }
       });
-      // confirmação real de entrega: só marcamos como "entregue" quando o WhatsApp confirma via ACK,
-      // não apenas quando sock.sendMessage() retorna sem erro (isso é um bug conhecido e sem correção
-      // definitiva da própria biblioteca: às vezes ela "resolve" a promessa sem a mensagem chegar de verdade)
+      // só marcamos como "entregue" quando o WhatsApp confirma via ACK (sendMessage resolver sem erro não garante entrega)
       sock.ev.on("messages.update", (updates) => {
         (updates || []).forEach((u) => {
           if (!u.key || !u.key.fromMe || !u.key.id) return;
@@ -76,11 +77,9 @@ module.exports = function createWhatsApp(opts) {
     }
   }
 
-  // mitigação sugerida pela comunidade do Baileys pra reduzir mensagens que ficam "travadas"
-  // sem confirmar entrega: reinicia a conexão periodicamente, sem precisar escanear o QR de novo
   setInterval(() => {
     if (state.status === "conectado" && sock) {
-      console.log("Reiniciando a conexão do WhatsApp preventivamente (mitigação de mensagens travadas)...");
+      console.log("Reiniciando a conexão do WhatsApp preventivamente...");
       try { sock.end(undefined); } catch (e) {}
     }
   }, RECONNECT_MITIGATION_MS);
@@ -93,22 +92,16 @@ module.exports = function createWhatsApp(opts) {
     setTimeout(start, 500);
   }
 
-  function guessNumbers(phoneDigitsRaw) {
-    let p = String(phoneDigitsRaw || "").replace(/\D/g, "");
-    if (p.length <= 11) p = "55" + p; // assume Brasil quando não vier com código do país
+  // candidatos de número: primeiro o normalizado (55 + DDD + 9 + número); depois, sem o 9
+  // (algumas contas antigas do WhatsApp ainda existem sem o 9 extra)
+  function guessNumbers(raw) {
+    const p = normalizePhoneBR(raw);
     const out = [p];
-    // erro de digitação mais comum no Brasil: o 9º dígito extra do celular presente ou faltando
-    if (p.length === 13 && p.startsWith("55")) {
-      const ddd = p.slice(2, 4), rest = p.slice(4);
-      if (rest.length === 9 && rest[0] === "9") out.push("55" + ddd + rest.slice(1));
-      else if (rest.length === 8) out.push("55" + ddd + "9" + rest);
-    }
+    if (p.length === 13 && p.startsWith("55") && p[4] === "9") out.push(p.slice(0, 4) + p.slice(5));
     return out;
   }
-  // confere de verdade se o número existe no WhatsApp antes de mandar — isso evita o caso mais comum
-  // de "mostra como enviado mas não chega": número digitado errado ou sem o 9º dígito
-  async function resolveJid(phoneDigitsRaw) {
-    for (const candidate of guessNumbers(phoneDigitsRaw)) {
+  async function resolveJid(raw) {
+    for (const candidate of guessNumbers(raw)) {
       try {
         const res = await sock.onWhatsApp(candidate + "@s.whatsapp.net");
         if (res && res[0] && res[0].exists) return res[0].jid;
@@ -117,71 +110,84 @@ module.exports = function createWhatsApp(opts) {
     return null;
   }
 
-  async function sendMessage(phone, text, kind, directJid) {
-    const phoneDigits = String(phone || "").replace(/\D/g, "");
+  // image (opcional): data URL da imagem; o texto vira a legenda
+  async function sendMessage(phone, text, kind, directJid, image) {
+    const phoneKey = normalizePhoneBR(phone);
+    const base = { direction: "out", phone: phoneKey, text: text, kind: kind || "geral", hasImage: !!image };
     if (!sock || state.status !== "conectado") {
-      logEntry({ direction: "out", phone: phoneDigits, text: text, status: "erro", error: "WhatsApp não está conectado. Escaneie o QR Code na aba WhatsApp.", kind: kind || "geral" });
+      logEntry(Object.assign({ status: "erro", error: "WhatsApp não está conectado. Escaneie o QR Code na aba WhatsApp." }, base));
       return false;
     }
-    // resposta a uma mensagem recebida: usa exatamente o mesmo endereço de onde ela veio
-    const jid = directJid || await resolveJid(phoneDigits);
+    const jid = directJid || await resolveJid(phone);
     if (!jid) {
-      logEntry({ direction: "out", phone: phoneDigits, text: text, status: "erro", error: "Esse número não foi encontrado no WhatsApp — confira se está certo, com DDD.", kind: kind || "geral" });
+      logEntry(Object.assign({ status: "erro", error: "Esse número não foi encontrado no WhatsApp — confira se está certo, com DDD." }, base));
       return false;
     }
     try {
-      const sent = await sock.sendMessage(jid, { text: text });
-      const entry = logEntry({ direction: "out", phone: phoneDigits, text: text, status: "enviado", kind: kind || "geral" });
+      let content = { text: text };
+      if (image) {
+        const m = /^data:image\/[\w.+-]+;base64,(.+)$/.exec(image);
+        if (m) content = { image: Buffer.from(m[1], "base64"), caption: text };
+      }
+      const sent = await sock.sendMessage(jid, content);
+      const entry = logEntry(Object.assign({ status: "enviado" }, base));
       if (entry && entry.id && sent && sent.key && sent.key.id) {
         const timer = setTimeout(() => {
           pendingAcks.delete(sent.key.id);
-          if (opts.onMessageUpdate) opts.onMessageUpdate(entry.id, { status: "sem_confirmacao", error: "O WhatsApp não confirmou a entrega em 20s — pode não ter chegado (isso é um problema conhecido e ainda sem correção da biblioteca não-oficial que usamos)." });
+          if (opts.onMessageUpdate) opts.onMessageUpdate(entry.id, { status: "sem_confirmacao", error: "O WhatsApp não confirmou a entrega em 20s — pode não ter chegado (problema conhecido da biblioteca não-oficial que usamos)." });
         }, ACK_TIMEOUT_MS);
         pendingAcks.set(sent.key.id, { logId: entry.id, timer: timer });
       }
       return true;
     } catch (e) {
-      logEntry({ direction: "out", phone: phoneDigits, text: text, status: "erro", error: e.message, kind: kind || "geral" });
+      logEntry(Object.assign({ status: "erro", error: e.message }, base));
       return false;
     }
   }
 
+  // ---------- textos ----------
+  function who(order) { return firstName(order.customerName) || "cliente"; }
+  function numTag(order) { return "*#" + String(order.number).padStart(3, "0") + "*"; }
+
   function orderStatusText(order) {
-    const num = "#" + String(order.number).padStart(3, "0");
-    if (order.status === "solicitacao") return "Recebemos seu pedido " + num + "! Já estamos confirmando por aqui. ✅";
-    if (order.status === "producao") return "Seu pedido " + num + " foi aceito e já está em preparo! 👨‍🍳";
+    const n = who(order), num = numTag(order);
+    if (order.status === "solicitacao") return "Oi, " + n + "! Recebemos seu pedido " + num + " e já estamos confirmando. ✅";
+    if (order.status === "producao") return "Boa notícia, " + n + "! 🎉 Seu pedido " + num + " foi aceito e já está sendo preparado. 👨‍🍳";
     if (order.status === "pronto") {
-      if (order.dispatched) return "Seu pedido " + num + " já saiu para entrega! 🛵";
-      if (order.type === "delivery") return "Seu pedido " + num + " está pronto! Em instantes sai para entrega. 🛵";
-      if (order.type === "retirada") return "Seu pedido " + num + " está pronto para retirada! Pode vir buscar. 🥡";
-      return "Seu pedido " + num + " está pronto! 🎉";
+      if (order.dispatched) return n + ", seu pedido " + num + " saiu para entrega! 🛵 Fica de olho, já já chega aí.";
+      if (order.type === "delivery") return n + ", seu pedido " + num + " está prontinho! 😋 O entregador já vai sair.";
+      if (order.type === "retirada") return n + ", seu pedido " + num + " está pronto para retirada! 🥡 Pode vir buscar, estamos te esperando.";
+      return n + ", seu pedido " + num + " está pronto! 🍽️ Já já ele chega até você.";
     }
-    if (order.status === "finalizado") return "Seu pedido " + num + " foi concluído. Obrigado pela preferência! 🙏";
+    if (order.status === "finalizado") return "Pedido " + num + " concluído! Obrigado pela preferência, " + n + ". 🙏 Quando bater a fome é só chamar de novo!";
+    if (order.status === "recusado") return n + ", infelizmente não conseguimos aceitar seu pedido " + num + " agora. 😕 Fala com a gente por aqui que a gente resolve!";
     return "Não encontrei um pedido em andamento com esse número.";
   }
 
-  function orderConfirmationText(order, fmtMoney) {
-    const num = "#" + String(order.number).padStart(3, "0");
+  function orderConfirmationText(order, fmtMoney, trackUrl) {
+    const n = who(order), num = numTag(order);
     const lines = order.lines.map((l) => {
-      var t = "- " + l.qty + "x " + l.name + " (" + fmtMoney(l.price * l.qty) + ")";
-      if (l.addons && l.addons.length) t += "\n  + " + l.addons.map((a) => a.name).join(", ");
+      let t = "• " + l.qty + "x " + l.name + " — " + fmtMoney(l.price * l.qty);
+      if (l.addons && l.addons.length) t += "\n   + " + l.addons.map((a) => a.name).join(", ");
       return t;
     }).join("\n");
-    var addr = order.delivery ? ("\nEntrega em: " + order.delivery.street + ", " + order.delivery.number + " - " + order.delivery.neighborhood + " (taxa " + fmtMoney(order.delivery.fee) + ")") : "";
-    return "Recebemos seu pedido " + num + "! ✅\n\n" + lines + addr + "\n\n*Total: " + fmtMoney(order.total) + "*\n\nJá vamos confirmar e te avisamos por aqui a cada etapa.";
+    const addr = order.delivery ? "\n📍 Entrega em: " + order.delivery.street + ", " + order.delivery.number + " — " + order.delivery.neighborhood + " (taxa " + fmtMoney(order.delivery.fee) + ")" : "";
+    const pay = order.payment && order.payment.method ? "\n💳 Pagamento: " + (PAY_LABEL[order.payment.method] || order.payment.method) : "";
+    const link = trackUrl ? "\n\nAcompanhe cada etapa em tempo real:\n" + trackUrl : "\n\nVamos te avisando por aqui a cada etapa.";
+    return "Oi, " + n + "! 😊 Recebemos seu pedido " + num + "!\n\n" + lines + addr + pay + "\n\n*Total: " + fmtMoney(order.total) + "*" + link;
   }
 
+  // ---------- mensagens recebidas / bot ----------
   async function handleIncoming(m) {
     const msg = m.messages && m.messages[0];
     if (!msg || msg.key.fromMe) return;
     const jid = msg.key.remoteJid || "";
-    // versões novas do WhatsApp podem endereçar o contato como "@lid" (id interno) em vez do número;
-    // quando vier o número real como alternativa, usamos ele só pra exibir/agrupar a conversa
+    // versões novas do WhatsApp podem endereçar o contato como "@lid"; quando vem o número real como alternativa, usamos ele
     const alt = msg.key.remoteJidAlt || "";
     const isPerson = jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid");
     if (!isPerson) return;
     const phoneJid = jid.endsWith("@s.whatsapp.net") ? jid : (alt.endsWith("@s.whatsapp.net") ? alt : jid);
-    const phone = phoneJid.split("@")[0].split(":")[0];
+    const phone = normalizePhoneBR(phoneJid.split("@")[0].split(":")[0]);
     const text = ((msg.message && (msg.message.conversation || (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text))) || "").trim();
     if (!text) return;
     logEntry({ direction: "in", phone: phone, text: text, status: "recebido" });
@@ -193,18 +199,27 @@ module.exports = function createWhatsApp(opts) {
       return;
     }
     if (!opts.getBotEnabled || !opts.getBotEnabled()) return;
+    // enquanto um humano não respondeu, o robô fica quieto pra não atrapalhar a conversa
+    if (opts.isHumanPending && opts.isHumanPending(phone)) return;
 
     const ctx = opts.getBotContext ? opts.getBotContext() : {};
+    const nome = (ctx.findCustomerName && firstName(ctx.findCustomerName(phone))) || "";
+    const oi = nome ? "Olá, " + nome + "! 👋" : "Olá! 👋";
     let reply;
-    if (/^1\b|cardap|menu/.test(lower)) {
-      reply = ctx.menuUrl ? "Aqui está nosso cardápio: " + ctx.menuUrl : "Peça pro atendente te passar o link do nosso cardápio, já estamos vendo sua mensagem.";
+    if (/^3\b|atendente|humano|atendimento|falar com (alguem|alguém|uma pessoa|pessoa)/.test(lower)) {
+      if (opts.onHumanRequest) opts.onHumanRequest(phone, nome);
+      reply = "Combinado" + (nome ? ", " + nome : "") + "! 🙋 Já avisamos nossa equipe — um atendente vai te responder por aqui em instantes.";
+    } else if (/^1\b|cardap|menu/.test(lower)) {
+      const url = ctx.menuUrl ? ctx.menuUrl() : "";
+      reply = url ? "Aqui está nosso cardápio" + (nome ? ", " + nome : "") + " 😋\n" + url : "Já já um atendente te passa o link do nosso cardápio! 😊";
     } else if (/^2\b|status|meu pedido|pedido/.test(lower)) {
       const order = ctx.findActiveOrderByPhone ? ctx.findActiveOrderByPhone(phone) : null;
-      reply = order ? orderStatusText(order) : "Não encontrei nenhum pedido em andamento com esse número.";
-    } else if (/^3\b|atendente|humano/.test(lower)) {
-      reply = "Combinado, um atendente humano vai te responder por aqui em instantes.";
+      if (order) {
+        const link = ctx.trackUrlFor ? ctx.trackUrlFor(order) : "";
+        reply = orderStatusText(order) + (link ? "\n\nAcompanhe em tempo real:\n" + link : "");
+      } else reply = "Não encontrei nenhum pedido em andamento com esse número. 🤔";
     } else {
-      reply = "Olá! 👋\n1 - Ver cardápio\n2 - Status do meu pedido\n3 - Falar com atendente";
+      reply = oi + "\nComo posso ajudar?\n\n1 - Ver cardápio\n2 - Status do meu pedido\n3 - Falar com atendente";
     }
     await sendMessage(phone, reply, "bot", jid);
   }

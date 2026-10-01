@@ -21,6 +21,12 @@
       <div class="today-hours" id="pub-today-hours"></div>
     </div>
     <div class="closed-banner" id="closed-banner" style="display:none;"></div>
+    <div class="repeat-order-banner" id="repeat-order-banner" style="display:none;">
+      <span id="repeat-order-text"></span>
+      <button class="btn btn-primary btn-small" id="btn-repeat-order">Pedir novamente</button>
+    </div>
+    <div class="search-bar"><input type="text" id="pub-search" placeholder="🔎 Buscar no cardápio…"></div>
+    <div class="cat-scroller" id="cat-scroller"></div>
     <div id="pub-menu-picker"></div>
   </main>
 
@@ -29,6 +35,23 @@
     <span class="cart-label">Ver pedido</span>
     <span class="cart-total" id="cart-bar-total">R$ 0,00</span>
   </div>
+</div>
+
+<div id="track-screen" style="display:none;">
+  <div class="cover-wrap"><div class="cover-photo" id="track-cover"></div><div class="avatar" id="track-avatar"></div></div>
+  <main style="max-width:600px; padding-top:60px;">
+    <div class="public-header"><h1 id="track-title">Acompanhe seu pedido</h1></div>
+    <div class="card" id="track-card">
+      <div class="track-num" id="track-num"></div>
+      <div class="track-timeline" id="track-timeline"></div>
+      <hr style="border:none; border-top:1px solid var(--line); margin:18px 0;">
+      <div class="section-title" style="font-size:15px;">Seu pedido</div>
+      <div id="track-items"></div>
+      <div class="total-row"><span>Total</span><span id="track-total"></span></div>
+      <div id="track-address" style="display:none;" class="addr-block-light"></div>
+      <div class="notice" style="margin-top:16px;">Cliente: <strong id="track-customer"></strong></div>
+    </div>
+  </main>
 </div>
 
 <div id="login-screen" style="display:none;">
@@ -72,6 +95,20 @@
             <button data-type="delivery">Delivery</button>
             <button data-type="retirada">Retirada</button>
           </div>
+          <div id="staff-delivery-box" style="display:none;">
+            <div class="field-row">
+              <div><label>Rua / Endereço</label><input type="text" id="staff-addr-street" placeholder="Rua, avenida..."></div>
+              <div style="max-width:100px;"><label>Número</label><input type="text" id="staff-addr-number" placeholder="Nº"></div>
+            </div>
+            <label>Bairro</label>
+            <select id="staff-addr-neighborhood"><option value="">Selecione...</option></select>
+          </div>
+          <label>Forma de pagamento</label>
+          <div class="pay-toggle" id="staff-pay-toggle">
+            <button data-pay="dinheiro" class="sel">Dinheiro</button>
+            <button data-pay="cartao">Cartão</button>
+            <button data-pay="pix">Pix</button>
+          </div>
           <label style="margin-top:14px;">Itens do pedido</label>
           <div class="order-lines" id="order-lines"><div class="empty-hint">Toque em um item do cardápio para adicionar.</div></div>
           <div class="total-row"><span>Total</span><span id="order-total">R$ 0,00</span></div>
@@ -108,6 +145,18 @@
           <label class="btn btn-ghost btn-small" style="margin:0; cursor:pointer;">⬆ Importar CSV<input type="file" accept=".csv" id="btn-import-csv" style="display:none;"></label>
         </div>
         <div id="menu-by-category"></div>
+      </div>
+    </section>
+
+    <section id="view-clientes" class="view">
+      <div class="card">
+        <div class="section-title">Clientes cadastrados</div>
+        <div class="filters"><input type="text" id="cust-search" placeholder="Buscar por nome ou telefone…" style="max-width:280px;"></div>
+        <table>
+          <thead><tr><th>Nome</th><th>Telefone</th><th>Endereço</th><th>Pedidos</th><th>Último pedido</th><th></th></tr></thead>
+          <tbody id="customers-table-body"></tbody>
+        </table>
+        <div class="empty-hint" id="customers-empty" style="display:none;">Nenhum cliente ainda.</div>
       </div>
     </section>
 
@@ -179,8 +228,11 @@
 
       <div class="card" style="margin-top:16px;">
         <div class="section-title">Lista de transmissão</div>
-        <div class="notice">Envie avisos (promoções, "estamos abertos" etc.) pra vários clientes de uma vez. Cada mensagem sai com alguns segundos de intervalo e um aviso de "responda PARAR" — clientes que pedirem pra sair não recebem mais transmissões, mas continuam recebendo as mensagens normais dos próprios pedidos deles.</div>
-        <button class="btn btn-primary btn-small" id="btn-open-broadcast">📣 Nova lista de transmissão</button>
+        <div class="notice">Envie avisos (promoções, "estamos abertos" etc.) pra vários clientes de uma vez. Cada mensagem sai com alguns segundos de intervalo e um aviso de "responda PARAR" — clientes que pedirem pra sair não recebem mais transmissões, mas continuam recebendo as mensagens normais dos próprios pedidos deles. Use <code>{nome}</code> no texto pra personalizar com o primeiro nome de cada cliente.</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-primary btn-small" id="btn-open-broadcast">📣 Nova lista de transmissão</button>
+          <button class="btn btn-ghost btn-small" id="btn-manage-templates">🗂️ Modelos salvos</button>
+        </div>
       </div>
     </section>
 
@@ -437,14 +489,38 @@
     <button class="modal-x" id="broadcast-close" type="button">✕</button>
     <div class="section-title">Nova lista de transmissão</div>
     <div class="notice">Recomendado: teste com poucos contatos antes de mandar pra lista toda. O envio é sequencial com alguns segundos entre cada mensagem — listas grandes podem levar minutos.</div>
-    <div class="field-row">
+    <label>Usar um modelo salvo (opcional)</label>
+    <select id="bc-template-select"><option value="">Escrever do zero…</option></select>
+    <div class="field-row" style="margin-top:10px;">
       <button class="btn btn-ghost btn-small" id="bc-select-all" type="button">Selecionar todos</button>
       <button class="btn btn-ghost btn-small" id="bc-select-none" type="button">Limpar seleção</button>
     </div>
     <div class="image-grid" id="bc-contact-list" style="grid-template-columns:1fr; max-height:220px;"></div>
-    <label style="margin-top:12px;">Mensagem</label>
-    <textarea id="bc-text" rows="4" placeholder="Ex: Hoje temos 20% off em combos! Só até às 22h 🍔"></textarea>
+    <label style="margin-top:12px;">Mensagem <span style="font-weight:400; color:var(--ink-soft);">(use {nome} pra personalizar)</span></label>
+    <textarea id="bc-text" rows="4" placeholder="Ex: Oi {nome}! Hoje temos 20% off em combos! Só até às 22h 🍔"></textarea>
+    <div class="img-preview item-img-preview" id="bc-image-preview" style="display:none;"></div>
     <button class="btn btn-primary btn-block" id="bc-send" style="margin-top:14px;">Enviar transmissão</button>
+  </div>
+</div>
+
+<!-- modal: gerenciar modelos de transmissão -->
+<div class="modal-overlay" id="template-modal">
+  <div class="modal-box">
+    <button class="modal-x" id="template-modal-close" type="button">✕</button>
+    <div class="section-title">Modelos de transmissão</div>
+    <div id="template-list"></div>
+    <hr style="border:none; border-top:1px solid var(--line); margin:16px 0;">
+    <div class="section-title" id="tm-form-title" style="font-size:15px;">Novo modelo</div>
+    <label>Nome do modelo</label><input type="text" id="tm-name" placeholder="Ex: Promo de segunda">
+    <label>Foto (opcional)</label>
+    <div class="img-preview item-img-preview" id="tm-image-preview"></div>
+    <button class="btn btn-ghost btn-small" id="btn-pick-template-image" type="button" style="margin-top:8px;">Escolher imagem</button>
+    <label style="margin-top:12px;">Mensagem <span style="font-weight:400; color:var(--ink-soft);">(use {nome} pra personalizar)</span></label>
+    <textarea id="tm-text" rows="3" placeholder="Ex: Oi {nome}! Hoje tem 20% off em combos 🍔"></textarea>
+    <div style="display:flex; gap:8px; margin-top:14px;">
+      <button class="btn btn-primary" id="tm-save" style="flex:1;">Salvar modelo</button>
+      <button class="btn btn-ghost" id="tm-cancel-edit" style="flex:1; display:none;">Cancelar edição</button>
+    </div>
   </div>
 </div>
 
